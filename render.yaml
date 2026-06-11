@@ -1,0 +1,38 @@
+services:
+  - type: web
+    name: dloop-telegram-bot
+    runtime: node
+    plan: starter
+    region: frankfurt
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: WEBHOOK_PORT
+        value: "10000"
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_BOT_USERNAME
+        value: dloop_Order_bot
+      - key: TELEGRAM_WEBHOOK_URL
+        sync: false
+      - key: SHOSHY_TELEGRAM_USER_ID
+        sync: false
+      - key: SUPABASE_URL
+        value: https://aqpwfurradxbnqvycvkm.supabase.co
+      - key: SUPABASE_PROJECT_ID
+        value: aqpwfurradxbnqvycvkm
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: STRIPE_PUBLISHABLE_KEY
+        sync: false
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
+      - key: FIREBASE_PROJECT_ID
+        value: dloopriderapp
+      - key: FIREBASE_SERVICE_ACCOUNT_KEY_PATH
+        value: /etc/secrets/firebase-service-account.json

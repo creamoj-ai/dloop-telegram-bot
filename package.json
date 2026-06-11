@@ -1,0 +1,45 @@
+{
+  "name": "dloop-telegram-bot",
+  "version": "1.0.0",
+  "description": "Dloop B2B SaaS Cooperative Logistics - Telegram Order Management Bot",
+  "main": "dist/server.js",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "lint": "eslint src/",
+    "format": "prettier --write src/"
+  },
+  "keywords": [
+    "dloop",
+    "telegram",
+    "bot",
+    "logistics",
+    "last-mile",
+    "saas",
+    "cooperative"
+  ],
+  "author": "Crescenzo Amodio <crescenzo@dloop.it>",
+  "license": "MIT",
+  "dependencies": {
+    "@supabase/supabase-js": "^2.39.3",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "firebase-admin": "^12.0.0",
+    "node-telegram-bot-api": "^0.63.0",
+    "stripe": "^13.5.0",
+    "uuid": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.10.6",
+    "@types/node-telegram-bot-api": "^0.64.14",
+    "@typescript-eslint/eslint-plugin": "^6.17.0",
+    "@typescript-eslint/parser": "^6.17.0",
+    "eslint": "^8.56.0",
+    "prettier": "^3.1.1",
+    "tsx": "^4.7.0",
+    "typescript": "^5.3.3"
+  }
+}

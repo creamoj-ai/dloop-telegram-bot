@@ -20,13 +20,20 @@ if (result.error) {
 
 // NOW we can dynamically import config
 const { CONFIG, logConfig } = await import("./config.js");
-const { initializeBot } = await import("./telegram-bot-core.js");
+const { initializeBot, setupWebhook, telegramBot } = await import("./telegram-bot-core.js");
 
 const app = express();
 
 // Middleware
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+// Telegram webhook route
+const WEBHOOK_PATH = `/telegram/${process.env.TELEGRAM_BOT_TOKEN}`;
+app.post(WEBHOOK_PATH, (req, res) => {
+  telegramBot.processUpdate(req.body);
+  res.sendStatus(200);
+});
 
 // Health check endpoint
 app.get("/health", (req, res) => {
@@ -87,18 +94,15 @@ async function startServer() {
     await initializeBot();
 
     // Start Express server
-    app.listen(PORT, () => {
+    app.listen(PORT, async () => {
       console.log(`
 ✅ Server listening on port ${PORT}
 📡 Environment: ${CONFIG.runtime.environment}
 🤖 Bot: ${CONFIG.telegram.botUsername}
     `);
 
-      if (CONFIG.telegram.webhookUrl) {
-        console.log(`🔗 Webhook URL: ${CONFIG.telegram.webhookUrl}`);
-      } else {
-        console.log(`⏱️ Using polling mode (check every 300ms)`);
-      }
+      // Setup webhook now that server is listening
+      await setupWebhook();
 
       console.log(`
 Ready to receive orders! 🚀

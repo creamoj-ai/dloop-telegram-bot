@@ -52,26 +52,11 @@ export async function initializeBot(): Promise<void> {
   validateConfig();
   logConfig();
 
-  // 2. Initialize Telegram Bot
-  const useWebhook = !!CONFIG.telegram.webhookUrl;
-
-  if (useWebhook) {
-    console.log("📡 Using webhook mode");
-    telegramBot = new TelegramBot(CONFIG.telegram.token, {
-      webHook: {
-        port: CONFIG.telegram.webhookPort,
-        host: "0.0.0.0",
-      },
-    });
-  } else {
-    console.log("⏱️ Using polling mode");
-    telegramBot = new TelegramBot(CONFIG.telegram.token, {
-      polling: {
-        interval: 300,
-        autoStart: true,
-      },
-    });
-  }
+  // 2. Initialize Telegram Bot (webhook mode only - no polling)
+  console.log("📡 Using webhook mode");
+  telegramBot = new TelegramBot(CONFIG.telegram.token, {
+    polling: false, // Disable polling to avoid conflicts
+  });
 
   // 3. Initialize Supabase (with WebSocket support for Node.js 20)
   supabaseClient = createClient(CONFIG.supabase.url, CONFIG.supabase.anonKey, {
@@ -99,7 +84,35 @@ export async function initializeBot(): Promise<void> {
   // 6. Register handlers
   registerHandlers();
 
+  // 7. Setup webhook (will be called from server.ts)
+  // This is done after server listens to ensure URL is available
   console.log("✅ Bot fully initialized!");
+}
+
+// Setup webhook after server is listening
+export async function setupWebhook(): Promise<void> {
+  try {
+    const PUBLIC_URL = process.env.PUBLIC_URL || "https://dloop-telegram-bot.onrender.com";
+    const WEBHOOK_PATH = `/telegram/${CONFIG.telegram.token}`;
+    const WEBHOOK_URL = `${PUBLIC_URL}${WEBHOOK_PATH}`;
+
+    // Delete existing webhook and drop pending updates
+    await telegramBot.deleteWebHook();
+    console.log("✅ Old webhook deleted");
+
+    // Set new webhook
+    await telegramBot.setWebHook(WEBHOOK_URL);
+    console.log(`✅ Webhook registered: ${WEBHOOK_URL}`);
+
+    // Verify webhook info
+    const info = await telegramBot.getWebHookInfo();
+    console.log(`📊 Webhook info:`, {
+      url: info.url,
+      pending_updates: info.pending_update_count,
+    });
+  } catch (err) {
+    console.error("❌ Error setting up webhook:", err);
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -112,12 +125,6 @@ function registerHandlers(): void {
 
   // Callback queries (inline button clicks)
   telegramBot.on("callback_query", handleCallbackQuery);
-
-  // Webhook route setup (if using webhook mode)
-  // Note: Webhook is registered on the main Express app in server.ts
-  if (CONFIG.telegram.webhookUrl) {
-    console.log(`📡 Webhook mode enabled - routes will be registered on main server`);
-  }
 
   console.log("✅ Handlers registered");
 }

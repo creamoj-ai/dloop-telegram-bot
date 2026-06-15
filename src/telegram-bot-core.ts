@@ -135,8 +135,13 @@ async function handleMessage(msg: TelegramBot.Message): Promise<void> {
   if (!userId) return;
 
   try {
-    // Command detection
-    if (text.startsWith("/")) {
+    // Check if /confirm is used inside an active session
+    const session = botSessions.get(chatId);
+    if (text === "/confirm" && session) {
+      // Treat /confirm as session input when in an active order creation
+      await handleSessionInput(chatId, userId, text);
+    } else if (text.startsWith("/")) {
+      // Other commands
       await handleCommand(chatId, userId, text);
     } else {
       // Free-form input (part of a multi-step command)

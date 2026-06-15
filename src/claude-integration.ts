@@ -82,6 +82,7 @@ export async function getAIResponse(
     const client = getAnthropicClient();
 
     // Call Claude Haiku for cost-effective response
+    console.log(`🤖 Calling Claude AI for chat ${chatId}...`);
     const message = await client.messages.create({
       model: "claude-haiku-4.5",
       max_tokens: 1024,
@@ -93,6 +94,7 @@ export async function getAIResponse(
         },
       ],
     });
+    console.log(`✅ Claude responded successfully`);
 
     // Extract text response
     const response = message.content[0];
@@ -110,10 +112,12 @@ export async function getAIResponse(
     return "Mi dispiace, non riesco a rispondere ora. Usa /start_order per creare un ordine.";
   } catch (error: unknown) {
     // Handle various error types
+    console.error(`❌ Error in getAIResponse:`, error);
     if (error instanceof Anthropic.APIError) {
       console.error(`❌ Anthropic API Error:`, {
         status: error.status,
         message: error.message,
+        error: error,
       });
 
       // Handle specific API errors

@@ -10,6 +10,8 @@ import { createClient } from "@supabase/supabase-js";
 import Stripe from "stripe";
 import * as fs from "fs";
 import * as admin from "firebase-admin";
+import ws from "ws";
+import express from "express";
 
 import {
   Order,
@@ -71,8 +73,12 @@ export async function initializeBot(): Promise<void> {
     });
   }
 
-  // 3. Initialize Supabase
-  supabaseClient = createClient(CONFIG.supabase.url, CONFIG.supabase.anonKey);
+  // 3. Initialize Supabase (with WebSocket support for Node.js 20)
+  supabaseClient = createClient(CONFIG.supabase.url, CONFIG.supabase.anonKey, {
+    realtime: {
+      transport: ws,
+    },
+  } as any);
   console.log("✅ Supabase client initialized");
 
   // 4. Initialize Stripe
@@ -108,17 +114,9 @@ function registerHandlers(): void {
   telegramBot.on("callback_query", handleCallbackQuery);
 
   // Webhook route setup (if using webhook mode)
+  // Note: Webhook is registered on the main Express app in server.ts
   if (CONFIG.telegram.webhookUrl) {
-    const app = require("express")();
-    const path = `/webhook/${CONFIG.telegram.token}`;
-    app.post(path, (req: any, res: any) => {
-      telegramBot.processUpdate(req.body);
-      res.sendStatus(200);
-    });
-    app.listen(CONFIG.telegram.webhookPort);
-    console.log(
-      `✅ Webhook server listening on port ${CONFIG.telegram.webhookPort}`
-    );
+    console.log(`📡 Webhook mode enabled - routes will be registered on main server`);
   }
 
   console.log("✅ Handlers registered");

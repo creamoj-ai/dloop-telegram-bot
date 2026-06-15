@@ -7,7 +7,11 @@
  * Fails fast if any required secret is missing.
  */
 
-export const CONFIG = {
+import * as fs from "fs";
+
+// Initialize CONFIG lazily - re-reads process.env each time
+function createConfig() {
+  return {
   // ─────────────────────────────────────────────────────────────────────
   // TELEGRAM BOT
   // ─────────────────────────────────────────────────────────────────────
@@ -73,7 +77,11 @@ export const CONFIG = {
     minOrderAmount: 5, // EUR
     maxOrderAmount: 500, // EUR
   },
-};
+  };
+}
+
+// Export CONFIG as lazy-evaluated (reads from process.env each time it's accessed)
+export const CONFIG = createConfig();
 
 // ─────────────────────────────────────────────────────────────────────
 // VALIDATION & INITIALIZATION
@@ -100,18 +108,25 @@ export function validateConfig(): void {
     process.exit(1);
   }
 
-  // Load Firebase service account key from file
+  // Load Firebase service account key from file (optional)
   if (process.env.FIREBASE_SERVICE_ACCOUNT_KEY_PATH) {
     try {
-      const fs = require("fs");
       const keyPath = process.env.FIREBASE_SERVICE_ACCOUNT_KEY_PATH;
-      const keyData = fs.readFileSync(keyPath, "utf-8");
-      CONFIG.firebase.serviceAccountKey = JSON.parse(keyData);
-      console.log("✅ Firebase service account key loaded");
+      if (fs.existsSync(keyPath)) {
+        const keyData = fs.readFileSync(keyPath, "utf-8");
+        CONFIG.firebase.serviceAccountKey = JSON.parse(keyData);
+        console.log("✅ Firebase service account key loaded");
+      } else {
+        console.warn(
+          "⚠️ Firebase service account key file not found, FCM notifications disabled"
+        );
+      }
     } catch (err) {
-      console.error("❌ Failed to load Firebase service account key:", err);
-      process.exit(1);
+      console.warn("⚠️ Failed to load Firebase service account key:", err);
+      // Don't exit - Firebase is optional for development
     }
+  } else {
+    console.warn("⚠️ Firebase service account key path not set, FCM disabled");
   }
 
   console.log("✅ All environment variables validated");

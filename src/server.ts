@@ -2,13 +2,25 @@
 // DLOOP TELEGRAM BOT - SERVER ENTRY POINT
 // ============================================================================
 
-import express from "express";
 import dotenv from "dotenv";
-import { initializeBot } from "./telegram-bot-core";
-import { CONFIG, logConfig } from "./config";
+import path from "path";
+import { fileURLToPath } from "url";
+import express from "express";
 
-// Load environment variables
-dotenv.config();
+// Load environment variables FIRST
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const envPath = path.resolve(__dirname, "..", ".env");
+console.log("📂 Loading .env from:", envPath);
+const result = dotenv.config({ path: envPath });
+if (result.error) {
+  console.warn("⚠️ Warning loading .env:", result.error.message);
+} else {
+  console.log("✅ .env loaded successfully");
+}
+
+// NOW we can dynamically import config
+const { CONFIG, logConfig } = await import("./config.js");
+const { initializeBot } = await import("./telegram-bot-core.js");
 
 const app = express();
 

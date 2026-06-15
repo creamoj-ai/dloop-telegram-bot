@@ -24,16 +24,12 @@ const { initializeBot, setupWebhook, telegramBot } = await import("./telegram-bo
 
 const app = express();
 
-// Middleware
+// Middleware FIRST
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Telegram webhook route
+// Telegram webhook route will be registered after bot initialization in startServer()
 const WEBHOOK_PATH = `/telegram/${process.env.TELEGRAM_BOT_TOKEN}`;
-app.post(WEBHOOK_PATH, (req, res) => {
-  telegramBot.processUpdate(req.body);
-  res.sendStatus(200);
-});
 
 // Health check endpoint
 app.get("/health", (req, res) => {
@@ -90,8 +86,19 @@ async function startServer() {
 ╚════════════════════════════════════════════╝
     `);
 
-    // Initialize bot
+    // Initialize bot FIRST
     await initializeBot();
+
+    // NOW register webhook route after bot is initialized
+    app.post(WEBHOOK_PATH, (req, res) => {
+      try {
+        telegramBot.processUpdate(req.body);
+        res.sendStatus(200);
+      } catch (err) {
+        console.error("❌ Error processing Telegram update:", err);
+        res.sendStatus(500);
+      }
+    });
 
     // Start Express server
     app.listen(PORT, async () => {

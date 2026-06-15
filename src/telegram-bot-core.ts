@@ -26,6 +26,7 @@ import {
 } from "./types";
 
 import { CONFIG, CONSTANTS, validateConfig, logConfig } from "./config";
+import { getAIResponse } from "./claude-integration.js";
 
 // ─────────────────────────────────────────────────────────────────────────
 // INITIALIZE CLIENTS
@@ -144,8 +145,27 @@ async function handleMessage(msg: TelegramBot.Message): Promise<void> {
       // Other commands
       await handleCommand(chatId, userId, text);
     } else {
-      // Free-form input (part of a multi-step command)
-      await handleSessionInput(chatId, userId, text);
+      // Free-form input: check if session exists
+      if (session) {
+        // Existing behavior: process form input
+        await handleSessionInput(chatId, userId, text);
+      } else {
+        // NEW: Intelligent AI response for general inquiries
+        try {
+          const aiReply = await getAIResponse({
+            userMessage: text,
+            chatId,
+            userId,
+          });
+          await telegramBot.sendMessage(chatId, aiReply);
+        } catch (error) {
+          console.error(`❌ AI response failed for chat ${chatId}:`, error);
+          await telegramBot.sendMessage(
+            chatId,
+            "Mi dispiace, non riesco a rispondere ora. Usa /start_order per creare un ordine."
+          );
+        }
+      }
     }
   } catch (err) {
     console.error(`❌ Error handling message from chat ${chatId}:`, err);

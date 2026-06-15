@@ -49,6 +49,13 @@ export const CONFIG = {
   },
 
   // ─────────────────────────────────────────────────────────────────────
+  // ANTHROPIC (CLAUDE AI FOR CUSTOMER SUPPORT)
+  // ─────────────────────────────────────────────────────────────────────
+  anthropic: {
+    apiKey: process.env.ANTHROPIC_API_KEY || "",
+  },
+
+  // ─────────────────────────────────────────────────────────────────────
   // RUNTIME SETTINGS
   // ─────────────────────────────────────────────────────────────────────
   runtime: {
@@ -161,6 +168,9 @@ export function logConfig(): void {
     firebase: {
       projectId: CONFIG.firebase.projectId,
       serviceAccountKey: CONFIG.firebase.serviceAccountKey ? "SET" : "NOT_SET",
+    },
+    anthropic: {
+      apiKey: CONFIG.anthropic.apiKey ? "SET" : "NOT_SET",
     },
     runtime: CONFIG.runtime,
   };

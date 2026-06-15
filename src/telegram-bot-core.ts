@@ -160,27 +160,36 @@ async function handleCommand(
   userId: number,
   command: string
 ): Promise<void> {
+  // Normalize command: convert /startorder to /start_order, etc.
+  const normalizedCommand = command
+    .replace(/startorder/i, "start_order")
+    .replace(/listorders/i, "list_orders")
+    .replace(/assignrider/i, "assign_rider")
+    .replace(/riderstatus/i, "rider_status")
+    .replace(/cancelorder/i, "cancel_order")
+    .replace(/manualdispatch/i, "manual_dispatch");
+
   const isAdmin = userId === CONFIG.telegram.shoshy_user_id;
 
-  if (command.startsWith(CONSTANTS.COMMAND_START_ORDER)) {
+  if (normalizedCommand.startsWith(CONSTANTS.COMMAND_START_ORDER)) {
     // /start_order — Multi-step order creation (Yamamay POC)
     await startOrderCommand(chatId, userId);
-  } else if (command.startsWith(CONSTANTS.COMMAND_ASSIGN_RIDER) && isAdmin) {
+  } else if (normalizedCommand.startsWith(CONSTANTS.COMMAND_ASSIGN_RIDER) && isAdmin) {
     // /assign_rider {order_id} {rider_id} — Manual rider assignment (SHOSHY only)
-    await assignRiderCommand(chatId, command);
-  } else if (command.startsWith(CONSTANTS.COMMAND_LIST_ORDERS) && isAdmin) {
+    await assignRiderCommand(chatId, normalizedCommand);
+  } else if (normalizedCommand.startsWith(CONSTANTS.COMMAND_LIST_ORDERS) && isAdmin) {
     // /list_orders [status] — Show pending orders (SHOSHY only)
-    await listOrdersCommand(chatId, command);
-  } else if (command.startsWith(CONSTANTS.COMMAND_RIDER_STATUS) && isAdmin) {
+    await listOrdersCommand(chatId, normalizedCommand);
+  } else if (normalizedCommand.startsWith(CONSTANTS.COMMAND_RIDER_STATUS) && isAdmin) {
     // /rider_status — Show online riders (SHOSHY only)
     await riderStatusCommand(chatId);
-  } else if (command.startsWith(CONSTANTS.COMMAND_MANUAL_DISPATCH) && isAdmin) {
+  } else if (normalizedCommand.startsWith(CONSTANTS.COMMAND_MANUAL_DISPATCH) && isAdmin) {
     // /manual_dispatch {order_id} — Force assign with no rider selected
-    await manualDispatchCommand(chatId, command);
-  } else if (command.startsWith(CONSTANTS.COMMAND_CANCEL_ORDER) && isAdmin) {
+    await manualDispatchCommand(chatId, normalizedCommand);
+  } else if (normalizedCommand.startsWith(CONSTANTS.COMMAND_CANCEL_ORDER) && isAdmin) {
     // /cancel_order {order_id} — Cancel an order
-    await cancelOrderCommand(chatId, command);
-  } else if (command === "/start") {
+    await cancelOrderCommand(chatId, normalizedCommand);
+  } else if (normalizedCommand === "/start") {
     // /start — Help menu
     await telegramBot.sendMessage(
       chatId,

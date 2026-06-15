@@ -97,6 +97,16 @@ export async function initializeBot(): Promise<void> {
 
 // ─────────────────────────────────────────────────────────────────────────
 // HANDLER REGISTRATION
+// ──────────────────────────────────────────────────────────────────────────
+// GET TELEGRAM BOT (Safe access after initialization)
+// ──────────────────────────────────────────────────────────────────────────
+
+export function getTelegramBot(): TelegramBot {
+  if (!telegramBot) {
+    throw new Error("Telegram bot not initialized. Call initializeBot() first.");
+  }
+  return telegramBot;
+}
 // ─────────────────────────────────────────────────────────────────────────
 
 function registerHandlers(): void {
@@ -105,21 +115,6 @@ function registerHandlers(): void {
 
   // Callback queries (inline button clicks)
   telegramBot.on("callback_query", handleCallbackQuery);
-
-  // Webhook route setup (if using webhook mode)
-  if (CONFIG.telegram.webhookUrl) {
-    const app = require("express")();
-    const path = `/webhook/${CONFIG.telegram.token}`;
-    app.post(path, (req: any, res: any) => {
-      telegramBot.processUpdate(req.body);
-      res.sendStatus(200);
-    });
-    app.listen(CONFIG.telegram.webhookPort);
-    console.log(
-      `✅ Webhook server listening on port ${CONFIG.telegram.webhookPort}`
-    );
-  }
-
   console.log("✅ Handlers registered");
 }
 

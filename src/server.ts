@@ -4,7 +4,7 @@
 
 import express from "express";
 import dotenv from "dotenv";
-import { initializeBot } from "./telegram-bot-core";
+import { initializeBot, getTelegramBot } from "./telegram-bot-core";
 import { CONFIG, logConfig } from "./config";
 
 // Load environment variables
@@ -34,14 +34,6 @@ app.get("/status", (req, res) => {
     timestamp: new Date().toISOString(),
   });
 });
-
-// Webhook endpoint (if using webhook mode)
-if (CONFIG.telegram.webhookUrl) {
-  app.post(`/webhook/${CONFIG.telegram.token}`, (req, res) => {
-    // Handled by telegram-bot-core.ts
-    res.sendStatus(200);
-  });
-}
 
 // Error handling
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
@@ -73,6 +65,22 @@ async function startServer() {
 
     // Initialize bot
     await initializeBot();
+
+    // Register webhook route AFTER bot initialization
+    const telegramBot = getTelegramBot();
+    const WEBHOOK_PATH = `/telegram/${CONFIG.telegram.token}`;
+
+    if (CONFIG.telegram.webhookUrl) {
+      app.post(WEBHOOK_PATH, (req, res) => {
+        try {
+          telegramBot.processUpdate(req.body);
+          res.sendStatus(200);
+        } catch (err) {
+          console.error("❌ Error processing Telegram update:", err);
+          res.sendStatus(500);
+        }
+      });
+    }
 
     // Start Express server
     app.listen(PORT, () => {

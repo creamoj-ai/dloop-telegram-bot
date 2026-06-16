@@ -45,3 +45,8 @@ coverage/
 .DS_Store
 .env.test
 .env.production.local
+
+# Supabase
+.supabase/
+supabase/.branches/
+supabase/.temp/

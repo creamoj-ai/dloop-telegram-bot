@@ -192,17 +192,17 @@ async function handleCommand(
       `
 🤖 Dloop Bot v1.0
 
-**SHOSHY Commands:**
+SHOSHY COMMANDS:
 /start_order - Crea nuovo ordine (step-by-step)
-/start_order_ai - Crea ordine con AI (linguaggio naturale) 🤖
+/start_order_ai - Crea ordine con AI (linguaggio naturale)
 /list_orders - Vedi ordini pendenti
 /assign_rider {order_id} {rider_id} - Assegna rider manualmente
 /rider_status - Vedi rider online
 /cancel_order {order_id} - Cancella ordine
 
-**Dealer Commands:**
+DEALER COMMANDS:
 /start_order - Crea nuovo ordine (step-by-step)
-/start_order_ai - Crea ordine con AI (linguaggio naturale) 🤖
+/start_order_ai - Crea ordine con AI (linguaggio naturale)
 
 Scrivi direttamente un ordine in italiano per usare l'AI automaticamente!
     `,

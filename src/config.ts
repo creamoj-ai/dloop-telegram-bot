@@ -125,6 +125,7 @@ export function validateConfig(): void {
 export const CONSTANTS = {
   // Telegram command prefixes
   COMMAND_START_ORDER: "/start_order",
+  COMMAND_START_ORDER_AI: "/start_order_ai",
   COMMAND_ASSIGN_RIDER: "/assign_rider",
   COMMAND_LIST_ORDERS: "/list_orders",
   COMMAND_RIDER_STATUS: "/rider_status",

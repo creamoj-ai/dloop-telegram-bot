@@ -164,7 +164,10 @@ async function handleCommand(
 ): Promise<void> {
   const isAdmin = userId === CONFIG.telegram.shoshy_user_id;
 
-  if (command.startsWith(CONSTANTS.COMMAND_START_ORDER)) {
+  if (command.startsWith(CONSTANTS.COMMAND_START_ORDER_AI)) {
+    // /start_order_ai — AI-powered natural language order parsing with Haiku
+    await startOrderAICommand(chatId, userId);
+  } else if (command.startsWith(CONSTANTS.COMMAND_START_ORDER)) {
     // /start_order — Multi-step order creation (Yamamay POC)
     await startOrderCommand(chatId, userId);
   } else if (command.startsWith(CONSTANTS.COMMAND_ASSIGN_RIDER) && isAdmin) {
@@ -190,16 +193,18 @@ async function handleCommand(
 🤖 Dloop Bot v1.0
 
 **SHOSHY Commands:**
-/start_order - Crea nuovo ordine
+/start_order - Crea nuovo ordine (step-by-step)
+/start_order_ai - Crea ordine con AI (linguaggio naturale) 🤖
 /list_orders - Vedi ordini pendenti
 /assign_rider {order_id} {rider_id} - Assegna rider manualmente
 /rider_status - Vedi rider online
 /cancel_order {order_id} - Cancella ordine
 
 **Dealer Commands:**
-/start_order - Crea nuovo ordine
+/start_order - Crea nuovo ordine (step-by-step)
+/start_order_ai - Crea ordine con AI (linguaggio naturale) 🤖
 
-Inserisci /start_order per iniziare.
+Scrivi direttamente un ordine in italiano per usare l'AI automaticamente!
     `,
       { parse_mode: "Markdown" }
     );
@@ -209,6 +214,30 @@ Inserisci /start_order per iniziare.
       "❌ Comando non riconosciuto. Usa /start per help."
     );
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// /START_ORDER_AI — Natural language order with Haiku parser
+// ─────────────────────────────────────────────────────────────────────────
+
+async function startOrderAICommand(
+  chatId: number,
+  userId: number
+): Promise<void> {
+  await telegramBot.sendMessage(
+    chatId,
+    `🤖 **Modalità AI - Ordine in linguaggio naturale**
+
+Dimmi l'ordine come vorresti: numero di prodotti, dettagli, indirizzo di consegna, nome e telefono.
+
+Esempi:
+📌 *Abbigliamento:* "Maglietta bianca taglia M, Via Roma 10 Napoli, Marco Rossi 320123456"
+📌 *Food:* "2 pizze margherita e una coca, Via del Mare 5 Napoli, Anna 3201234567"
+📌 *Pharmacy:* "Tachipirina 500mg confezione da 20, Via Nazionale, Dr. Rossi 3201234567"
+
+Scrivi pure un messaggio naturale! 🚀`,
+    { parse_mode: "Markdown" }
+  );
 }
 
 // ─────────────────────────────────────────────────────────────────────────

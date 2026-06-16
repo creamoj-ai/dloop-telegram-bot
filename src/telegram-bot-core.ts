@@ -26,6 +26,13 @@ import {
 } from "./types";
 
 import { CONFIG, CONSTANTS, validateConfig, logConfig } from "./config";
+import {
+  parseOrder,
+  buildOrderParsingContext,
+  saveTrainingExample,
+  confirmTrainingExample,
+  ParsedOrder,
+} from "./order-parser";
 
 // ─────────────────────────────────────────────────────────────────────────
 // INITIALIZE CLIENTS
@@ -241,6 +248,140 @@ async function startOrderCommand(
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+// FREE-TEXT AI ORDER HANDLER (Haiku parser for natural language orders)
+// ─────────────────────────────────────────────────────────────────────────
+
+async function handleFreeTextOrder(
+  chatId: number,
+  userId: number,
+  text: string
+): Promise<void> {
+  await telegramBot.sendChatAction(chatId, "typing");
+
+  // ── RESOLVE DEALER ID ──
+  // Try to find a dealer linked to this Telegram chat/user.
+  // This enables catalog context and dealer-specific few-shot examples.
+  const dealerId = await resolveDealerIdFromTelegram(chatId, userId);
+
+  // ── BUILD AI CONTEXT (catalog + few-shot) ──
+  const context = await buildOrderParsingContext(dealerId);
+
+  // ── PARSE WITH ENRICHED CONTEXT ──
+  const parsed = await parseOrder(text, dealerId, context);
+
+  if (!parsed) {
+    await telegramBot.sendMessage(
+      chatId,
+      "⚠️ Non ho capito l'ordine. Riprova, oppure usa /start_order."
+    );
+    return;
+  }
+
+  if (!parsed.is_order) {
+    await telegramBot.sendMessage(
+      chatId,
+      '👋 Scrivimi un ordine (es: "2 pizze margherita in Via Roma 5, Napoli") oppure /start per i comandi.'
+    );
+    return;
+  }
+
+  if (parsed.missing_fields.length > 0) {
+    const labels: Record<string, string> = {
+      items: "cosa ordini",
+      "delivery.street": "la via",
+      "delivery.number": "il numero civico",
+      "delivery.city": "la citta",
+      "customer.name": "il nome del cliente",
+      "customer.phone": "il numero di telefono",
+    };
+    const mancano = parsed.missing_fields
+      .map((f) => labels[f] ?? f)
+      .join(", ");
+    await telegramBot.sendMessage(
+      chatId,
+      `Ci siamo quasi! Mi manca: ${mancano}. Puoi riscrivere l'ordine completo?`
+    );
+    return;
+  }
+
+  const address =
+    `${parsed.delivery.street ?? ""} ${parsed.delivery.number ?? ""}`.trim() +
+    `, ${parsed.delivery.city ?? ""}` +
+    (parsed.delivery.extra ? ` -- ${parsed.delivery.extra}` : "");
+
+  // Build the Order object aligned with existing types
+  // NEW: use unit_price from catalog when available
+  const order: any = {
+    id: crypto.randomUUID(),
+    dealer_id: dealerId || null,
+    customer_name: parsed.customer.name ?? "Da confermare",
+    customer_phone: parsed.customer.phone ?? null,
+    customer_address: address,
+    items: parsed.items.map((i) => ({
+      name: i.product,
+      quantity: i.quantity,
+      unit_price: i.unit_price ?? 0,
+      subtotal: (i.unit_price ?? 0) * i.quantity,
+    })),
+    total_amount: 0,
+    stripe_fee_amount: 0,
+    total_with_fee: 0,
+    status: OrderStatus.PENDING,
+    payment_status: PaymentStatus.PENDING,
+    notes: parsed.items.some((i) => i.notes)
+      ? `AI: ${parsed.items
+          .map((i) => (i.notes ? `${i.product} (${i.notes})` : null))
+          .filter(Boolean)
+          .join("; ")}`
+      : null,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+
+  // Calculate total from items (auto-filled prices from catalog)
+  order.total_amount = order.items.reduce(
+    (sum: number, item: any) => sum + item.subtotal, 0
+  );
+
+  const { error } = await supabaseClient
+    .from(CONSTANTS.TABLE_ORDERS)
+    .insert([order]);
+
+  if (error) {
+    console.error("[handleFreeTextOrder] insert:", error);
+    await telegramBot.sendMessage(
+      chatId,
+      "⚠️ Errore nel salvataggio dell'ordine. Riprova con /start_order."
+    );
+    return;
+  }
+
+  // ── TRAINING EXAMPLE: save raw_input + parsed_output ──
+  await saveTrainingExample(order.id, text, parsed, dealerId);
+
+  const itemsList = parsed.items
+    .map(
+      (i) =>
+        `• ${i.quantity}x ${i.product}${i.unit_price ? ` (${i.unit_price.toFixed(2)} EUR)` : ""}${i.notes ? ` -- ${i.notes}` : ""}`
+    )
+    .join("\n");
+
+  // Show total only if prices were resolved from catalog
+  const totalLine = order.total_amount > 0
+    ? `\n💰 Totale stimato: ${order.total_amount.toFixed(2)} EUR`
+    : "\n💰 Prezzo e pagamento verranno definiti.";
+
+  const contextInfo = context.contextSummary.hasCatalog
+    ? " (prezzi dal catalogo)"
+    : "";
+
+  await telegramBot.sendMessage(
+    chatId,
+    `✅ Ordine ricevuto (#${order.id.slice(0, 8)})${contextInfo}\n\n${itemsList}\n\n📍 ${address}${totalLine}\n\nIn lavorazione.`
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 // SESSION INPUT HANDLER (Multi-step form responses)
 // ─────────────────────────────────────────────────────────────────────────
 
@@ -252,10 +393,8 @@ async function handleSessionInput(
   const session = botSessions.get(chatId);
 
   if (!session) {
-    await telegramBot.sendMessage(
-      chatId,
-      "❌ Nessuna sessione attiva. Usa /start_order per iniziare."
-    );
+    // No active session: try free-text AI order parsing
+    await handleFreeTextOrder(chatId, userId, input);
     return;
   }
 
@@ -506,6 +645,17 @@ async function confirmOrderCallback(
 
     console.log(`✅ Order ${order.id} saved to Supabase`);
 
+    // 1b. Save training example if session has raw_input from AI parse
+    //     (multi-step form orders get a synthetic training example too)
+    if ((session as any).raw_input_text && (session as any).parsed_order_result) {
+      await saveTrainingExample(
+        order.id,
+        (session as any).raw_input_text,
+        (session as any).parsed_order_result,
+        order.dealer_id
+      );
+    }
+
     // 2. Create Stripe payment link (Price first: paymentLinks API requires a Price ID)
     const price = await stripeClient.prices.create({
       currency: "eur",
@@ -638,6 +788,9 @@ async function acceptOrderCallback(
       .from(CONSTANTS.TABLE_ORDERS)
       .update({ status: OrderStatus.ACCEPTED })
       .eq("id", orderId);
+
+    // 1b. Mark the training example as confirmed (dealer-validated parse)
+    await confirmTrainingExample(orderId);
 
     // 2. Notify SHOSHY
     const message = `✅ Ordine #${orderId.slice(0, 8).toUpperCase()} accettato dal dealer!\n\nProssimo: assegna rider manualmente con /assign_rider`;
@@ -892,6 +1045,64 @@ async function getDealer(dealerId: string): Promise<Dealer | null> {
     .single();
 
   return error ? null : data;
+}
+
+/**
+ * Resolve a dealer ID from a Telegram chat or user ID.
+ *
+ * Strategy (in order):
+ *   1. Check if there's a dealer with this telegram_user_id
+ *   2. Check if the chat_id matches a dealer's telegram_user_id (group chats)
+ *   3. Return null if no match (order proceeds without dealer context)
+ *
+ * This is non-blocking: if dealer resolution fails, the order still works
+ * but without catalog context or dealer-specific few-shot examples.
+ */
+async function resolveDealerIdFromTelegram(
+  chatId: number,
+  userId: number
+): Promise<string | null> {
+  try {
+    // Try matching by telegram_user_id (most common: dealer sends message directly)
+    const { data: dealerByUser, error: userError } = await supabaseClient
+      .from(CONSTANTS.TABLE_DEALERS)
+      .select("id")
+      .eq("telegram_user_id", String(userId))
+      .limit(1)
+      .maybeSingle();
+
+    if (!userError && dealerByUser) {
+      console.log(
+        `[resolveDealerIdFromTelegram] Resolved dealer ${dealerByUser.id} from userId ${userId}`
+      );
+      return dealerByUser.id;
+    }
+
+    // Try matching by chat_id (for group chats where dealer has a dedicated group)
+    if (chatId !== userId) {
+      const { data: dealerByChat, error: chatError } = await supabaseClient
+        .from(CONSTANTS.TABLE_DEALERS)
+        .select("id")
+        .eq("telegram_user_id", String(chatId))
+        .limit(1)
+        .maybeSingle();
+
+      if (!chatError && dealerByChat) {
+        console.log(
+          `[resolveDealerIdFromTelegram] Resolved dealer ${dealerByChat.id} from chatId ${chatId}`
+        );
+        return dealerByChat.id;
+      }
+    }
+
+    console.log(
+      `[resolveDealerIdFromTelegram] No dealer found for userId=${userId}, chatId=${chatId}`
+    );
+    return null;
+  } catch (err) {
+    console.warn("[resolveDealerIdFromTelegram] Error resolving dealer:", err);
+    return null;
+  }
 }
 
 async function getRider(riderId: string): Promise<Rider | null> {

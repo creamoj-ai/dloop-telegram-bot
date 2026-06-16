@@ -49,6 +49,13 @@ export const CONFIG = {
   },
 
   // ─────────────────────────────────────────────────────────────────────
+  // ANTHROPIC (CLAUDE AI FOR ORDER PARSING)
+  // ─────────────────────────────────────────────────────────────────────
+  anthropic: {
+    apiKey: process.env.ANTHROPIC_API_KEY || "",
+  },
+
+  // ─────────────────────────────────────────────────────────────────────
   // RUNTIME SETTINGS
   // ─────────────────────────────────────────────────────────────────────
   runtime: {
@@ -81,6 +88,7 @@ export function validateConfig(): void {
     "STRIPE_SECRET_KEY",
     "STRIPE_PUBLISHABLE_KEY",
     "FIREBASE_PROJECT_ID",
+    "ANTHROPIC_API_KEY",
   ];
 
   const missing = requiredVars.filter((v) => !process.env[v]);
@@ -137,6 +145,22 @@ export const CONSTANTS = {
   TABLE_DEALERS: "dealers",
   TABLE_RIDERS: "riders",
   TABLE_DELIVERY_HISTORY: "delivery_history",
+  TABLE_TRAINING_EXAMPLES: "training_examples",
+  TABLE_MARKET_PRODUCTS: "market_products",
+  TABLE_DEALER_CATEGORIES: "dealer_categories",
+
+  // Few-shot learning settings
+  FEW_SHOT_MAX_EXAMPLES: 5,
+  FEW_SHOT_MIN_QUALITY_SCORE: 3,
+
+  // Market products context settings
+  CATALOG_MAX_PRODUCTS: 50,       // Max products to include in AI context
+  CATALOG_CONTEXT_ENABLED: true,  // Toggle catalog injection on/off
+
+  // Multi-category settings
+  CATEGORY_DETECTION_ENABLED: true,   // Enable text-based category detection as fallback
+  DEFAULT_CATEGORY: "food",           // Default category when none is detected
+  CATEGORY_SEED_EXAMPLES_ENABLED: true, // Use seed examples from category definitions on cold start
 };
 
 // ─────────────────────────────────────────────────────────────────────

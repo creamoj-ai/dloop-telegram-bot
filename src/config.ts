@@ -7,11 +7,7 @@
  * Fails fast if any required secret is missing.
  */
 
-import * as fs from "fs";
-
-// Initialize CONFIG lazily - re-reads process.env each time
-function createConfig() {
-  return {
+export const CONFIG = {
   // ─────────────────────────────────────────────────────────────────────
   // TELEGRAM BOT
   // ─────────────────────────────────────────────────────────────────────
@@ -53,13 +49,6 @@ function createConfig() {
   },
 
   // ─────────────────────────────────────────────────────────────────────
-  // ANTHROPIC (CLAUDE AI FOR CUSTOMER SUPPORT)
-  // ─────────────────────────────────────────────────────────────────────
-  anthropic: {
-    apiKey: process.env.ANTHROPIC_API_KEY || "",
-  },
-
-  // ─────────────────────────────────────────────────────────────────────
   // RUNTIME SETTINGS
   // ─────────────────────────────────────────────────────────────────────
   runtime: {
@@ -77,11 +66,7 @@ function createConfig() {
     minOrderAmount: 5, // EUR
     maxOrderAmount: 500, // EUR
   },
-  };
-}
-
-// Export CONFIG as lazy-evaluated (reads from process.env each time it's accessed)
-export const CONFIG = createConfig();
+};
 
 // ─────────────────────────────────────────────────────────────────────
 // VALIDATION & INITIALIZATION
@@ -108,25 +93,18 @@ export function validateConfig(): void {
     process.exit(1);
   }
 
-  // Load Firebase service account key from file (optional)
+  // Load Firebase service account key from file
   if (process.env.FIREBASE_SERVICE_ACCOUNT_KEY_PATH) {
     try {
+      const fs = require("fs");
       const keyPath = process.env.FIREBASE_SERVICE_ACCOUNT_KEY_PATH;
-      if (fs.existsSync(keyPath)) {
-        const keyData = fs.readFileSync(keyPath, "utf-8");
-        CONFIG.firebase.serviceAccountKey = JSON.parse(keyData);
-        console.log("✅ Firebase service account key loaded");
-      } else {
-        console.warn(
-          "⚠️ Firebase service account key file not found, FCM notifications disabled"
-        );
-      }
+      const keyData = fs.readFileSync(keyPath, "utf-8");
+      CONFIG.firebase.serviceAccountKey = JSON.parse(keyData);
+      console.log("✅ Firebase service account key loaded");
     } catch (err) {
-      console.warn("⚠️ Failed to load Firebase service account key:", err);
-      // Don't exit - Firebase is optional for development
+      console.error("❌ Failed to load Firebase service account key:", err);
+      process.exit(1);
     }
-  } else {
-    console.warn("⚠️ Firebase service account key path not set, FCM disabled");
   }
 
   console.log("✅ All environment variables validated");
@@ -183,9 +161,6 @@ export function logConfig(): void {
     firebase: {
       projectId: CONFIG.firebase.projectId,
       serviceAccountKey: CONFIG.firebase.serviceAccountKey ? "SET" : "NOT_SET",
-    },
-    anthropic: {
-      apiKey: CONFIG.anthropic.apiKey ? "SET" : "NOT_SET",
     },
     runtime: CONFIG.runtime,
   };

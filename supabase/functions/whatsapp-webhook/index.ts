@@ -1,12 +1,13 @@
 // ============================================================================
 // DLOOP SUPABASE EDGE FUNCTION - WHATSAPP WEBHOOK
 // ============================================================================
-// Riceve ordini da WhatsApp → routing merchant → notifica Telegram
+// FASE 2: Riceve ordini → crea order → genera Payment Link → notifica Telegram
 // Deploy: supabase functions deploy whatsapp-webhook
 // ============================================================================
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.0";
+import Stripe from "https://esm.sh/stripe@14.11.0";
 
 // ─────────────────────────────────────────────────────────────────────────
 // TYPES
@@ -15,14 +16,25 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.0";
 interface Dealer {
   id: string;
   business_name: string;
-  telegram_chat_id: bigint | null;
+  telegram_chat_id: number | null;
   whatsapp_number: string | null;
 }
 
-interface WebhookPayload {
-  text?: string; // es: "Ordina_Yamamay" o testo libero
-  phone?: string; // numero cliente WhatsApp
-  message_id?: string;
+interface OrderItem {
+  name: string;
+  quantity: number;
+  price: number;
+}
+
+interface Order {
+  id: string;
+  dealer_id: string;
+  customer_phone: string;
+  items: OrderItem[];
+  total_amount: number;
+  stripe_fee_amount: number;
+  total_with_fee: number;
+  stripe_payment_link: string;
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -30,13 +42,11 @@ interface WebhookPayload {
 // ─────────────────────────────────────────────────────────────────────────
 
 serve(async (req: Request) => {
-  // CORS headers
   const corsHeaders = {
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
   };
 
-  // Handle CORS preflight
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }
@@ -49,98 +59,158 @@ serve(async (req: Request) => {
 
     console.log("[whatsapp-webhook] Received:", { text, phone });
 
-    if (!text) {
+    if (!text || !phone) {
       return new Response(
-        JSON.stringify({ error: "Missing 'text' parameter" }),
+        JSON.stringify({ error: "Missing 'text' or 'phone' parameter" }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
-    // 2. Initialize Supabase client
+    // 2. Initialize clients
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseKey = Deno.env.get("SUPABASE_ANON_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    // 3. Parse store name from text (rule-based)
-    const storeName = extractStoreName(text);
-    console.log("[whatsapp-webhook] Extracted store name:", storeName);
+    const stripeSecretKey = Deno.env.get("STRIPE_SECRET_KEY")!;
+    const stripe = new Stripe(stripeSecretKey, {
+      apiVersion: "2023-10-16",
+      httpClient: Stripe.createFetchHttpClient(),
+    });
 
-    if (!storeName) {
+    // 3. Parse order from text (rule-based POC)
+    const { storeName, items } = parseOrder(text);
+    console.log("[whatsapp-webhook] Parsed:", { storeName, items });
+
+    if (!storeName || items.length === 0) {
       return new Response(
-        JSON.stringify({ error: "Cannot extract store name from text", text }),
+        JSON.stringify({ error: "Cannot parse order from text", text }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
-    // 4. Lookup dealer in database
+    // 4. Lookup dealer
     const { data: dealers, error: dbError } = await supabase
       .from("dealers")
       .select("id, business_name, telegram_chat_id, whatsapp_number")
       .ilike("business_name", `%${storeName}%`)
       .eq("status", "active")
-      .limit(2); // Limit 2 per detectare ambiguità
+      .limit(1);
 
-    if (dbError) {
-      console.error("[whatsapp-webhook] DB error:", dbError);
-      return new Response(
-        JSON.stringify({ error: "Database error", details: dbError.message }),
-        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-
-    if (!dealers || dealers.length === 0) {
-      console.warn("[whatsapp-webhook] No dealer found for:", storeName);
-      // TODO: Fallback Haiku per disambiguazione
+    if (dbError || !dealers || dealers.length === 0) {
+      console.error("[whatsapp-webhook] Dealer not found:", storeName);
       return new Response(
         JSON.stringify({ error: "Store not found", storeName }),
         { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
-    if (dealers.length > 1) {
-      console.warn("[whatsapp-webhook] Multiple dealers found:", dealers.map(d => d.business_name));
-      // TODO: Fallback Haiku per selezione
-      return new Response(
-        JSON.stringify({ error: "Ambiguous store name", matches: dealers.map(d => d.business_name) }),
-        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-
     const dealer = dealers[0] as Dealer;
 
     if (!dealer.telegram_chat_id) {
-      console.error("[whatsapp-webhook] Dealer has no telegram_chat_id:", dealer.id);
       return new Response(
         JSON.stringify({ error: "Dealer not configured for Telegram", dealer: dealer.business_name }),
         { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
-    // 5. Send Telegram notification
-    const telegramBotToken = Deno.env.get("TELEGRAM_BOT_TOKEN")!;
-    const notificationSent = await sendTelegramNotification(
-      telegramBotToken,
-      dealer.telegram_chat_id,
-      {
-        storeName: dealer.business_name,
-        customerPhone: phone,
-        orderText: text,
-      }
-    );
+    // 5. Calculate totals
+    const totalAmount = items.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+    const stripeFee = Math.round(totalAmount * 0.035 * 100) / 100; // 3.5%
+    const totalWithFee = totalAmount + stripeFee;
 
-    if (!notificationSent) {
+    // 6. Create order in database
+    const { data: orderData, error: orderError } = await supabase
+      .from("merchant_orders")
+      .insert({
+        dealer_id: dealer.id,
+        customer_phone: phone,
+        items: items,
+        total_amount: totalAmount,
+        stripe_fee_amount: stripeFee,
+        total_with_fee: totalWithFee,
+        status: "pending",
+        payment_status: "pending",
+      })
+      .select("id")
+      .single();
+
+    if (orderError || !orderData) {
+      console.error("[whatsapp-webhook] Failed to create order:", orderError);
       return new Response(
-        JSON.stringify({ error: "Failed to send Telegram notification" }),
+        JSON.stringify({ error: "Failed to create order", details: orderError?.message }),
         { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
-    // 6. Success response
+    const orderId = orderData.id;
+    console.log("[whatsapp-webhook] Order created:", orderId);
+
+    // 7. Generate Stripe Payment Link
+    const paymentLink = await stripe.paymentLinks.create({
+      line_items: [
+        {
+          price_data: {
+            currency: "eur",
+            unit_amount: Math.round(totalWithFee * 100), // cents
+            product_data: {
+              name: `Ordine #${orderId.substring(0, 8)}`,
+              description: items.map(i => `${i.quantity}x ${i.name}`).join(", "),
+            },
+          },
+          quantity: 1,
+        },
+      ],
+      metadata: {
+        order_id: orderId,
+        dealer_id: dealer.id,
+        customer_phone: phone,
+      },
+      after_completion: {
+        type: "redirect",
+        redirect: {
+          url: `https://dloop.app/order/${orderId}/success`, // TODO: real URL
+        },
+      },
+    });
+
+    console.log("[whatsapp-webhook] Payment link created:", paymentLink.url);
+
+    // 8. Update order with payment link
+    await supabase
+      .from("merchant_orders")
+      .update({ stripe_payment_link: paymentLink.url })
+      .eq("id", orderId);
+
+    // 9. Send Telegram notification to merchant
+    const telegramBotToken = Deno.env.get("TELEGRAM_BOT_TOKEN")!;
+    console.log("[whatsapp-webhook] Sending Telegram to chat_id:", dealer.telegram_chat_id);
+    const notificationSent = await sendTelegramNotification(
+      telegramBotToken,
+      Number(dealer.telegram_chat_id),
+      {
+        orderId: orderId,
+        storeName: dealer.business_name,
+        customerPhone: phone,
+        items: items,
+        totalAmount: totalAmount,
+        stripeFee: stripeFee,
+        totalWithFee: totalWithFee,
+        paymentLink: paymentLink.url,
+      }
+    );
+
+    if (!notificationSent) {
+      console.warn("[whatsapp-webhook] Failed to send Telegram notification");
+    }
+
+    // 10. Success response
     return new Response(
       JSON.stringify({
         success: true,
+        order_id: orderId,
         dealer: dealer.business_name,
-        notified: true,
+        total: totalWithFee,
+        payment_link: paymentLink.url,
       }),
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
@@ -149,33 +219,37 @@ serve(async (req: Request) => {
     console.error("[whatsapp-webhook] Unhandled error:", err);
     return new Response(
       JSON.stringify({ error: "Internal server error", message: (err as Error).message }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      { status: 500, headers: { "Content-Type": "application/json" } }
     );
   }
 });
 
 // ─────────────────────────────────────────────────────────────────────────
-// HELPER: Extract store name from text
+// HELPER: Parse order from text (rule-based POC)
 // ─────────────────────────────────────────────────────────────────────────
 
-function extractStoreName(text: string): string | null {
-  // Pattern 1: "Ordina_NegozioX" → extract "NegozioX"
-  const pattern1 = /^Ordina[_\s]+(.+)$/i;
-  const match1 = text.match(pattern1);
-  if (match1) return match1[1].trim();
+function parseOrder(text: string): { storeName: string | null; items: OrderItem[] } {
+  // Pattern: "Ordina_Yamamay_Pizza" → store: "Yamamay", item: "Pizza"
+  const pattern = /^Ordina[_\s]+([^_\s]+)(?:[_\s]+(.+))?$/i;
+  const match = text.match(pattern);
 
-  // Pattern 2: "Ordine per: NegozioX" → extract "NegozioX"
-  const pattern2 = /ordine\s+per[:\s]+(.+)$/i;
-  const match2 = text.match(pattern2);
-  if (match2) return match2[1].trim();
-
-  // Pattern 3: Direct store name (fallback)
-  // Se il testo non ha prefissi, assumiamo sia il nome del negozio
-  if (text.length > 3 && !text.includes("http")) {
-    return text.trim();
+  if (!match) {
+    return { storeName: null, items: [] };
   }
 
-  return null;
+  const storeName = match[1];
+  const itemName = match[2] || "Default Item";
+
+  // POC: prezzo fisso €10 per item
+  const items: OrderItem[] = [
+    {
+      name: itemName,
+      quantity: 1,
+      price: 10.00,
+    },
+  ];
+
+  return { storeName, items };
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -184,36 +258,52 @@ function extractStoreName(text: string): string | null {
 
 async function sendTelegramNotification(
   botToken: string,
-  chatId: bigint,
+  chatId: number,
   data: {
+    orderId: string;
     storeName: string;
     customerPhone: string;
-    orderText: string;
+    items: OrderItem[];
+    totalAmount: number;
+    stripeFee: number;
+    totalWithFee: number;
+    paymentLink: string;
   }
 ): Promise<boolean> {
-  const message = `
-🆕 *NUOVO ORDINE DA WHATSAPP*
+  const itemsList = data.items
+    .map(i => `- ${i.quantity}x ${i.name} - EUR ${i.price.toFixed(2)}`)
+    .join("\n");
 
-🏪 Negozio: *${data.storeName}*
-📱 Cliente: ${data.customerPhone || "N/A"}
-📝 Messaggio:
-\`\`\`
-${data.orderText}
-\`\`\`
+  const message = `NUOVO ORDINE DA WHATSAPP
 
-💡 Usa il bot Telegram per gestire l'ordine.
-  `.trim();
+Negozio: ${data.storeName}
+Cliente: ${data.customerPhone}
+Ordine ID: ${data.orderId.substring(0, 8)}
+
+Items:
+${itemsList}
+
+Subtotale: EUR ${data.totalAmount.toFixed(2)}
+Fee Stripe: EUR ${data.stripeFee.toFixed(2)}
+TOTALE: EUR ${data.totalWithFee.toFixed(2)}
+
+Payment Link:
+${data.paymentLink}
+
+In attesa di pagamento...`.trim();
 
   const telegramUrl = `https://api.telegram.org/bot${botToken}/sendMessage`;
+
+  console.log("[Telegram] Sending to chat_id:", chatId, "type:", typeof chatId);
 
   try {
     const response = await fetch(telegramUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        chat_id: chatId.toString(),
+        chat_id: chatId,
         text: message,
-        parse_mode: "Markdown",
+        disable_web_page_preview: true,
       }),
     });
 
@@ -232,17 +322,3 @@ ${data.orderText}
     return false;
   }
 }
-
-// ============================================================================
-// DEPLOY INSTRUCTIONS:
-//
-// 1. Install Supabase CLI: npm install -g supabase
-// 2. Login: supabase login
-// 3. Link project: supabase link --project-ref aqpwfurradxbnqvycvkm
-// 4. Deploy: supabase functions deploy whatsapp-webhook
-// 5. Set secrets:
-//    supabase secrets set TELEGRAM_BOT_TOKEN=<token>
-//
-// 6. Test:
-//    curl -X POST "https://aqpwfurradxbnqvycvkm.supabase.co/functions/v1/whatsapp-webhook?text=Ordina_Yamamay&phone=+393201234567"
-// ============================================================================

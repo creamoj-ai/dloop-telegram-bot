@@ -12,3 +12,14 @@ project_id = "aqpwfurradxbnqvycvkm"
 
 [functions.whatsapp-webhook]
 verify_jwt = false
+
+[functions.telegram-webhook]
+verify_jwt = false
+
+[functions.escalation-tick]
+verify_jwt = false
+
+[functions.weekly-billing]
+verify_jwt = false
+# Cron schedule: ogni lunedi 00:00 UTC
+# Deploy con: supabase functions deploy weekly-billing --schedule "0 0 * * 1"

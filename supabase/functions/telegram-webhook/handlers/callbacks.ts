@@ -166,10 +166,11 @@ async function handleConfirmOrder(ctx: Context) {
     // 3. Assegna rider (auto)
     const riderId = await assignRider(ctx.api as unknown as Bot, orderId);
 
-    // 4. Notifica successo
+    // 4. Notifica successo + tracking link
     await ctx.answerCallbackQuery();
+    const trackingUrl = `https://dloop.it/t/${orderId}`;
     await ctx.editMessageText(
-      `✅ **Ordine creato!**\n\nID: #${orderId.slice(0, 8).toUpperCase()}\n${riderId ? `Rider assegnato: ${riderId.slice(0, 8)}` : "In attesa assegnazione rider"}`,
+      `✅ **Ordine creato!**\n\nID: #${orderId.slice(0, 8).toUpperCase()}\n${riderId ? `Rider assegnato: ${riderId.slice(0, 8)}` : "In attesa assegnazione rider"}\n\n📍 **Traccia ordine:**\n${trackingUrl}`,
       { parse_mode: "Markdown" }
     );
 

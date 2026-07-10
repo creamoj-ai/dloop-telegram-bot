@@ -9,6 +9,7 @@ import { getSupabaseClient } from "../shared/supabase.ts";
 import { CONSTANTS } from "../shared/config.ts";
 import { Order, Rider, RiderStatus, OrderStatus } from "../shared/types.ts";
 import { Bot } from "../deps.ts";
+import { notifyMerchant } from "./notification-service.ts";
 
 /**
  * Broadcast ordine a rider in zona (tier 0 = top reputation).
@@ -127,6 +128,7 @@ async function directAssignRider(
   if (order && rider.telegram_user_id) {
     await notifyRiders(bot, orderId, order as Order, [rider as Rider]);
   }
+  await notifyMerchant(bot, "rider_assigned", orderId, rider.name);
 
   console.log(`[dispatch-service] Ordine ${orderId} assegnato direttamente a rider ${riderId}`);
   return riderId;

@@ -32,7 +32,8 @@ export const CONSTANTS = {
   CALLBACK_PAYMENT_MODE_DELIVERY_ON_COMPLETION: "pm_delivery_on_completion",
   CALLBACK_PAYMENT_MODE_COD: "pm_cod",
   CALLBACK_PAYMENT_MODE_PREPAID: "pm_prepaid",
-  CALLBACK_CONFIRM_DELIVERY_PAYMENT: "confirm_delivery_payment", // {orderId}
+  CALLBACK_CONFIRM_DELIVERY_PAYMENT: "confirm_delivery_payment", // confirm_delivery_payment_{uuid}
+  CALLBACK_PICKUP_CONFIRMED: "pickup_confirmed",                 // pickup_confirmed_{uuid}
   CALLBACK_RATE_RIDER: "rate_rider", // rate_rider_{orderId}_{score}
 
   // Reputation system

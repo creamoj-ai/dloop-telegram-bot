@@ -8,6 +8,7 @@ import { Bot, Context } from "../deps.ts";
 import { getSupabaseClient } from "../shared/supabase.ts";
 import { getSession, upsertSession, deleteSession } from "../services/session-store.ts";
 import { createDeliveryOrder } from "../services/order-service.ts";
+import { notifyMerchant } from "../services/notification-service.ts";
 import { assignRider } from "../services/dispatch-service.ts";
 import { recordDecline, updateReputationScore, getZoneMedianFee } from "../services/reputation-service.ts";
 import { CONSTANTS } from "../shared/config.ts";
@@ -33,6 +34,9 @@ export function registerCallbacks(bot: Bot) {
 
   // Rider conferma incasso consegna
   bot.callbackQuery(/^confirm_delivery_payment_(.+)$/, handleConfirmDeliveryPayment);
+
+  // Rider lifecycle
+  bot.callbackQuery(/^pickup_confirmed_(.+)$/, handlePickupConfirmed);
 
   // Rating rider
   bot.callbackQuery(/^rate_rider_(.+)_(\d)$/, handleRateRider);
@@ -162,6 +166,7 @@ async function handleConfirmOrder(ctx: Context) {
 
     // 2. Crea ordine + deduce token
     const orderId = await createDeliveryOrder(orderDraft);
+    await notifyMerchant(ctx.api as unknown as Bot, "new_order", orderId);
 
     // 3. Assegna rider (auto)
     const riderId = await assignRider(ctx.api as unknown as Bot, orderId);
@@ -204,10 +209,10 @@ async function handleAcceptOrder(ctx: Context) {
   try {
     const supabase = getSupabaseClient();
 
-    // 1. Fetch rider ID da telegram_user_id
+    // 1. Fetch rider ID + nome da telegram_user_id
     const { data: rider, error: riderError } = await supabase
       .from(CONSTANTS.TABLE_RIDERS)
-      .select("id")
+      .select("id, name")
       .eq("telegram_user_id", riderId)
       .maybeSingle();
 
@@ -216,8 +221,8 @@ async function handleAcceptOrder(ctx: Context) {
       return;
     }
 
-    // 2. Update order: assegna rider + status ASSIGNED
-    const { error } = await supabase
+    // 2. Update order: assegna rider + status ASSIGNED (guard race condition)
+    const { data: updatedOrder, error } = await supabase
       .from(CONSTANTS.TABLE_ORDERS)
       .update({
         assigned_rider_id: rider.id,
@@ -225,13 +230,30 @@ async function handleAcceptOrder(ctx: Context) {
         updated_at: new Date().toISOString(),
       })
       .eq("id", orderId)
-      .eq("status", OrderStatus.PENDING); // Solo se ancora pending (race condition)
+      .eq("status", OrderStatus.PENDING)
+      .select("id, pickup_point")
+      .maybeSingle();
 
     if (error) throw error;
 
+    if (!updatedOrder) {
+      await ctx.answerCallbackQuery({ text: "❌ Ordine già assegnato ad altro rider", show_alert: true });
+      return;
+    }
+
+    await notifyMerchant(ctx.api as unknown as Bot, "rider_assigned", orderId, rider.name);
     await ctx.answerCallbackQuery({ text: "✅ Ordine assegnato" });
     await ctx.editMessageReplyMarkup({ reply_markup: { inline_keyboard: [] } });
-    await ctx.reply(`✅ Ordine #${orderId.slice(0, 8)} assegnato a te. Buona consegna! 🚚`);
+    await ctx.reply(
+      `✅ Ordine #${orderId.slice(0, 8).toUpperCase()} assegnato a te.\n📍 Ritira: ${updatedOrder.pickup_point}\n\nPremi quando ritiri il pacco:`,
+      {
+        reply_markup: {
+          inline_keyboard: [[
+            { text: "📦 Ho ritirato", callback_data: `${CONSTANTS.CALLBACK_PICKUP_CONFIRMED}_${orderId}` },
+          ]],
+        },
+      }
+    );
 
     console.log(`[callbacks] Rider ${rider.id} accepted order ${orderId}`);
   } catch (err) {
@@ -293,10 +315,11 @@ async function handleConfirmDeliveryPayment(ctx: Context) {
   try {
     const supabase = getSupabaseClient();
 
-    // Update delivery_payment_confirmed + delivery_paid_at
+    // Chiude l'ordine: status COMPLETED + conferma incasso rider
     const { error } = await supabase
       .from(CONSTANTS.TABLE_ORDERS)
       .update({
+        status: OrderStatus.COMPLETED,
         delivery_payment_confirmed: true,
         delivery_paid_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
@@ -305,14 +328,60 @@ async function handleConfirmDeliveryPayment(ctx: Context) {
 
     if (error) throw error;
 
-    await ctx.answerCallbackQuery({ text: "✅ Incasso confermato" });
+    await notifyMerchant(ctx.api as unknown as Bot, "completed", orderId);
+    await ctx.answerCallbackQuery({ text: "✅ Consegna completata" });
     await ctx.editMessageReplyMarkup({ reply_markup: { inline_keyboard: [] } });
-    await ctx.reply(`✅ Incasso consegna confermato per ordine #${orderId.slice(0, 8)}`);
+    await ctx.reply(`✅ Ordine #${orderId.slice(0, 8).toUpperCase()} consegnato e chiuso. Ottimo lavoro! 🎉`);
 
-    console.log(`[callbacks] Delivery payment confirmed for order ${orderId}`);
+    console.log(`[callbacks] Ordine ${orderId} completato`);
   } catch (err) {
     console.error("[callbacks] handleConfirmDeliveryPayment error:", err);
     await ctx.answerCallbackQuery({ text: "Errore conferma incasso", show_alert: true });
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// RIDER PICKUP CONFIRMED → IN_DELIVERY
+// ─────────────────────────────────────────────────────────────────────────
+
+async function handlePickupConfirmed(ctx: Context) {
+  const orderId = (ctx.match as RegExpMatchArray)[1];
+
+  try {
+    const supabase = getSupabaseClient();
+
+    const { error } = await supabase
+      .from(CONSTANTS.TABLE_ORDERS)
+      .update({
+        status: OrderStatus.IN_DELIVERY,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", orderId)
+      .eq("status", OrderStatus.ASSIGNED);
+
+    if (error) throw error;
+
+    await notifyMerchant(ctx.api as unknown as Bot, "in_delivery", orderId);
+    await ctx.answerCallbackQuery({ text: "📦 Ritiro confermato" });
+    await ctx.editMessageReplyMarkup({ reply_markup: { inline_keyboard: [] } });
+    await ctx.reply(
+      `📦 Ritiro confermato per ordine #${orderId.slice(0, 8).toUpperCase()}.\n\nPremi quando hai consegnato:`,
+      {
+        reply_markup: {
+          inline_keyboard: [[
+            {
+              text: "✅ Ho consegnato",
+              callback_data: `${CONSTANTS.CALLBACK_CONFIRM_DELIVERY_PAYMENT}_${orderId}`,
+            },
+          ]],
+        },
+      }
+    );
+
+    console.log(`[callbacks] Ordine ${orderId} in consegna`);
+  } catch (err) {
+    console.error("[callbacks] handlePickupConfirmed error:", err);
+    await ctx.answerCallbackQuery({ text: "Errore conferma ritiro", show_alert: true });
   }
 }
 

@@ -128,6 +128,7 @@ serve(async (req: Request) => {
     const body = await req.json();
     const {
       initData,
+      action, // Opzionale: 'get_merchant' per solo fetch dati
       packageSize,
       packageCount,
       isFragile,
@@ -185,6 +186,17 @@ serve(async (req: Request) => {
     }
 
     console.log("[miniapp-create-order] Merchant found:", merchant.business_name);
+
+    // 2b. Se action=get_merchant, restituisce solo dati merchant (per prefill)
+    if (action === 'get_merchant') {
+      return new Response(
+        JSON.stringify({
+          merchant_address: merchant.address || null,
+          merchant_name: merchant.business_name,
+        }),
+        { status: 200, headers: corsHeaders }
+      );
+    }
 
     // 3. Valida campi obbligatori
     if (!deliveryAddress || !recipientName || !recipientPhone) {

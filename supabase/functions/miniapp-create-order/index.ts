@@ -7,7 +7,6 @@
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.0";
-import { Bot } from "https://deno.land/x/grammy@v1.30.0/mod.ts";
 import { validateTelegramInitData, safeLogInitData } from "./validate-init-data.ts";
 
 // Configurazione
@@ -16,7 +15,6 @@ const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const TELEGRAM_BOT_TOKEN = Deno.env.get("TELEGRAM_BOT_TOKEN")!;
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
-const bot = new Bot(TELEGRAM_BOT_TOKEN);
 
 // CORS headers
 const corsHeaders = {
@@ -97,7 +95,15 @@ ${packageSize ? `Taglia: ${packageSize}` : ""}
 
 📍 Traccia: ${trackingUrl}`;
 
-    await bot.api.sendMessage(telegramUserId, message);
+    // Usa fetch diretto invece di grammY per evitare dipendenze pesanti
+    await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chat_id: telegramUserId,
+        text: message,
+      }),
+    });
   } catch (err) {
     console.error("[miniapp-create-order] Notify merchant error:", err);
     // Non bloccante: ordine già creato

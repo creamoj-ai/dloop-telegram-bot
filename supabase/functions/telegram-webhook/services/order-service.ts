@@ -46,6 +46,9 @@ export async function createDeliveryOrder(
     source: orderDraft.source || "telegram_manual",
     mode: orderDraft.mode || "dispatch",
     status: OrderStatus.PENDING,
+    package_size: orderDraft.package_size || null,
+    package_count: orderDraft.package_count || 1,
+    is_fragile: orderDraft.is_fragile || false,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   });

@@ -10,7 +10,8 @@
 
 export type MerchantMode = "dispatch" | "commerce";
 export type PaymentMode = "prepaid" | "delivery_on_completion" | "cod";
-export type OrderSource = "telegram_manual" | "wa_intake" | "api";
+export type OrderSource = "telegram_manual" | "telegram_miniapp" | "telegram_link" | "wa_intake" | "api";
+export type PackageSize = "S" | "M" | "L" | "XL";
 
 // ─────────────────────────────────────────────────────────────────────────
 // ORDER (DELIVERY ORDER — SaaS puro)
@@ -35,6 +36,12 @@ export interface Order {
   delivery_payment_confirmed?: boolean; // Rider conferma incasso
   broadcast_tier?: number; // 0=top, 1=media, 2=tutti, 3=esteso
   broadcast_started_at?: string | null; // ISO 8601 - inizio broadcast
+  package_size?: PackageSize; // S/M/L/XL
+  package_count?: number; // Numero colli (default 1)
+  is_fragile?: boolean; // Pacco fragile
+  customer_token?: string | null; // Token per link /c/{token}
+  token_expires_at?: string | null; // Scadenza token (24h)
+  offered_fee?: number | null; // Prezzo offerto e accettato dal cliente
   created_at: string; // ISO 8601
   updated_at: string; // ISO 8601
 }
@@ -68,6 +75,11 @@ export interface Merchant {
   wa_setup_status: "pending" | "configured" | "active";
   wa_phone_number?: string | null;
   wa_intake_chat_id?: string | null; // Chat ID Telegram per intake WA
+  default_package_size?: PackageSize | null; // Taglia default per /ordine
+  default_payment_mode?: PaymentMode | null; // Modalità pagamento default
+  pickup_address?: string | null; // Indirizzo pickup leggibile
+  pickup_lat?: number | null; // Latitudine pickup
+  pickup_lng?: number | null; // Longitudine pickup
   created_at: string;
   notes?: string | null;
 }

@@ -31,25 +31,21 @@ const corsHeaders = {
 async function createDeliveryOrder(orderDraft: any): Promise<string> {
   const orderId = crypto.randomUUID();
 
-  // 1. Crea ordine
+  // 1. Crea ordine (usa nomi colonne corretti dello schema)
   const { error: insertError } = await supabase.from("orders").insert({
     id: orderId,
-    merchant_id: orderDraft.merchant_id,
-    pickup_point: orderDraft.pickup_point,
-    delivery_address: orderDraft.delivery_address,
-    recipient_name: orderDraft.recipient_name,
-    recipient_phone: orderDraft.recipient_phone,
-    time_window: orderDraft.time_window || null,
-    notes: orderDraft.notes || null,
+    dealer_contact_id: orderDraft.merchant_id, // merchant_id → dealer_contact_id
+    pickup_address: orderDraft.pickup_point,
+    customer_address: orderDraft.delivery_address, // delivery_address → customer_address
+    customer_name: orderDraft.recipient_name, // recipient_name → customer_name
+    customer_phone: orderDraft.recipient_phone, // recipient_phone → customer_phone
     payment_mode: orderDraft.payment_mode || "delivery_on_completion",
     source: "telegram_miniapp",
-    mode: orderDraft.mode || "dispatch",
     status: "pending",
     package_size: orderDraft.package_size || null,
     package_count: orderDraft.package_count || 1,
     is_fragile: orderDraft.is_fragile || false,
     created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
   });
 
   if (insertError) {
@@ -193,7 +189,7 @@ serve(async (req: Request) => {
     // 3. Valida campi obbligatori
     if (!deliveryAddress || !recipientName || !recipientPhone) {
       return new Response(
-        JSON.stringify({ error: "Missing required fields" }),
+        JSON.stringify({ error: "Campi obbligatori mancanti" }),
         { status: 400, headers: corsHeaders }
       );
     }
@@ -211,13 +207,10 @@ serve(async (req: Request) => {
     const orderDraft = {
       merchant_id: merchant.id,
       pickup_point: pickupAddress || merchant.address || "Indirizzo ritiro non specificato",
-      delivery_address: deliveryAddress,
-      recipient_name: recipientName,
-      recipient_phone: recipientPhone,
-      time_window: timeWindow || null,
-      notes: notes || null,
+      delivery_address: deliveryAddress, // Sarà mappato a customer_address
+      recipient_name: recipientName, // Sarà mappato a customer_name
+      recipient_phone: recipientPhone, // Sarà mappato a customer_phone
       payment_mode: merchant.default_payment_mode || "delivery_on_completion",
-      mode: merchant.mode || "dispatch",
       package_size: packageSize || null,
       package_count: packageCount || 1,
       is_fragile: isFragile || false,

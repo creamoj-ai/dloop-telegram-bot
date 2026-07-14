@@ -29,19 +29,30 @@ interface OrderDraft {
 const draftStore = new Map<number, OrderDraft>();
 
 async function handleOrdine(ctx: Context) {
+  console.log("[handleOrdine] Command received from user:", ctx.from!.id);
+
   const userId = ctx.from!.id;
   const supabase = getSupabaseClient();
 
-  const { data: merchant } = await supabase
+  console.log("[handleOrdine] Querying merchant...");
+  const { data: merchant, error } = await supabase
     .from(CONSTANTS.TABLE_MERCHANTS)
     .select("id, default_package_size, default_payment_mode, pickup_address")
     .eq("telegram_user_id", userId)
     .maybeSingle();
 
+  if (error) {
+    console.error("[handleOrdine] DB error:", error);
+  }
+  console.log("[handleOrdine] Merchant found:", !!merchant);
+
   if (!merchant) {
+    console.log("[handleOrdine] User not registered as merchant");
     await ctx.reply("Non sei registrato come merchant. Contatta admin.");
     return;
   }
+
+  console.log("[handleOrdine] Merchant ID:", merchant.id);
 
   const draft: OrderDraft = {
     merchant_id: merchant.id,

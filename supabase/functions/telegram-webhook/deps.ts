@@ -21,4 +21,5 @@ export { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.0";
 export type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.39.0";
 
 // --- Deno std ---
-export { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+// NOTE: serve() from std@0.168.0 removed — using Deno.serve() natively (Deno 2.x)
+// export { serve } from "https://deno.land/std@0.168.0/http/server.ts";

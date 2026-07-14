@@ -17,7 +17,6 @@ import { assignRider } from "../services/dispatch-service.ts";
  */
 export function registerCommands(bot: Bot) {
   bot.command("start", handleStart);
-  bot.command("ordine", handleOrdine); // Mini App entry point
   bot.command("nuovo_ordine", handleNuovoOrdine);
   bot.command("mia_reputazione", handleMiaReputazione); // Rider visibility
 
@@ -44,6 +43,8 @@ async function adminOnly(ctx: Context, next: () => Promise<void>) {
 // ─────────────────────────────────────────────────────────────────────────
 
 async function handleStart(ctx: Context) {
+  console.log("[handleStart] Command received from user:", ctx.from?.id);
+
   const isAdmin = ctx.from?.id === CONFIG.telegram.shoshyUserId;
 
   let message = `
@@ -64,7 +65,14 @@ ${isAdmin ? `
 ` : ""}
   `.trim();
 
-  await ctx.reply(message, { parse_mode: "HTML" });
+  console.log("[handleStart] Sending reply...");
+  try {
+    await ctx.reply(message, { parse_mode: "HTML" });
+    console.log("[handleStart] Reply sent successfully");
+  } catch (error) {
+    console.error("[handleStart] ERROR sending reply:", error);
+    throw error;
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -90,48 +98,6 @@ async function handleNuovoOrdine(ctx: Context) {
       parse_mode: "Markdown",
       reply_markup: {
         inline_keyboard: [[{ text: "❌ Annulla", callback_data: CONSTANTS.CALLBACK_CANCEL_SESSION }]],
-      },
-    }
-  );
-}
-
-// ─────────────────────────────────────────────────────────────────────────
-// /ordine — Apre Telegram Mini App per creazione ordine rapida
-// ─────────────────────────────────────────────────────────────────────────
-
-async function handleOrdine(ctx: Context) {
-  const userId = ctx.from!.id;
-  const supabase = getSupabaseClient();
-
-  // Verifica merchant registrato
-  const { data: merchant, error } = await supabase
-    .from(CONSTANTS.TABLE_MERCHANTS)
-    .select("id, business_name")
-    .eq("telegram_user_id", userId)
-    .maybeSingle();
-
-  if (error || !merchant) {
-    await ctx.reply(
-      "⚠️ Non sei registrato come merchant. Contatta admin.",
-      { parse_mode: "HTML" }
-    );
-    return;
-  }
-
-  // Bottone Web App (apre Mini App)
-  await ctx.reply(
-    "📦 <b>CREA ORDINE RAPIDO</b>\n\nApri il form per creare un nuovo ordine consegna.",
-    {
-      parse_mode: "HTML",
-      reply_markup: {
-        inline_keyboard: [[
-          {
-            text: "📱 Apri Form Ordine",
-            web_app: {
-              url: "https://dloop.it/miniapp",
-            },
-          },
-        ]],
       },
     }
   );

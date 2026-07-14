@@ -9,6 +9,9 @@ export const CONFIG = {
     shoshyUserId: parseInt(Deno.env.get("SHOSHY_TELEGRAM_USER_ID") || "0"),
     webhookSecret: Deno.env.get("TELEGRAM_WEBHOOK_SECRET") || "",
   },
+  customerLink: {
+    baseUrl: Deno.env.get("CUSTOMER_LINK_BASE_URL") || "https://dloop.it",
+  },
 };
 
 export const CONSTANTS = {
@@ -65,5 +68,13 @@ export const CONSTANTS = {
       2: 0, // Tutti
       3: 0, // Raggio esteso + alert admin
     },
+  },
+
+  // Package sizes
+  PACKAGE_SIZE: {
+    S: { label: "Piccolo", desc: "< 30cm, < 2kg" },
+    M: { label: "Medio", desc: "30-50cm, 2-5kg" },
+    L: { label: "Grande", desc: "50-80cm, 5-15kg" },
+    XL: { label: "Extra Large", desc: "> 80cm, > 15kg" },
   },
 };

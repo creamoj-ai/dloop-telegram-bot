@@ -27,7 +27,7 @@ export async function getSession(
 }
 
 /**
- * Crea o aggiorna sessione. expires_at si rinnova automaticamente via trigger.
+ * Crea o aggiorna sessione. expires_at calcolato automaticamente (30min).
  */
 export async function upsertSession(
   chatId: number,
@@ -36,6 +36,8 @@ export async function upsertSession(
   orderDraft: Partial<Order>,
   tempData?: Record<string, unknown>
 ): Promise<void> {
+  const expiresAt = new Date(Date.now() + CONSTANTS.SESSION_TIMEOUT_MS).toISOString();
+
   const { error } = await getSupabaseClient()
     .from(CONSTANTS.TABLE_TELEGRAM_SESSIONS)
     .upsert(
@@ -45,6 +47,7 @@ export async function upsertSession(
         step,
         order_draft: orderDraft,
         temp_data: tempData || {},
+        expires_at: expiresAt,
       },
       { onConflict: "chat_id" }
     );

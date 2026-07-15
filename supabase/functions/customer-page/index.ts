@@ -294,11 +294,12 @@ async function handlePost(token: string, req: Request, supabase: any): Promise<R
 
 /**
  * Recupera ordine da customer_token
+ * NOTA: NO select("*") su orders → rompe su colonna location (POINT type)
  */
 async function getOrderByToken(token: string, supabase: any): Promise<OrderData | null> {
   const { data, error } = await supabase
     .from("orders")
-    .select("*")
+    .select("customer_token, token_expires_at, status, package_size, package_count, is_fragile, pickup_address, payment_mode, delivery_pin, id, dealer_contact_id, customer_name")
     .eq("customer_token", token)
     .maybeSingle();
 

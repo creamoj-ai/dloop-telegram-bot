@@ -5,6 +5,7 @@ import { Bot, Context } from "../deps.ts";
 import { getSupabaseClient } from "../shared/supabase.ts";
 import { CONFIG, CONSTANTS } from "../shared/config.ts";
 import { PackageSize, Merchant } from "../shared/types.ts";
+import { getSession, upsertSession, deleteSession } from "../services/session-store.ts";
 
 export function registerCustomerLinkHandlers(bot: Bot) {
   bot.command("ordine", handleOrdine);
@@ -25,8 +26,6 @@ interface OrderDraft {
   package_count: number;
   is_fragile: boolean;
 }
-
-const draftStore = new Map<number, OrderDraft>();
 
 async function handleOrdine(ctx: Context) {
   console.log("[handleOrdine] Command received from user:", ctx.from!.id);
@@ -61,7 +60,8 @@ async function handleOrdine(ctx: Context) {
     is_fragile: false,
   };
 
-  draftStore.set(userId, draft);
+  // Save to DB instead of in-memory Map
+  await upsertSession(ctx.chat!.id, userId, "idle" as any, draft as any);
 
   await showPackageSelection(ctx, draft);
 }
@@ -110,50 +110,71 @@ Seleziona taglia pacco:`;
 
 async function handlePackageSizeCallback(ctx: Context) {
   const userId = ctx.from!.id;
+  const chatId = ctx.chat!.id;
   const size = (ctx.match as RegExpMatchArray)[1] as PackageSize;
 
-  const draft = draftStore.get(userId);
-  if (!draft) {
+  const session = await getSession(chatId);
+  if (!session) {
     await ctx.answerCallbackQuery({ text: "Sessione scaduta. Usa /ordine", show_alert: true });
     return;
   }
 
+  const draft = session.order_draft as OrderDraft;
   draft.package_size = size;
+
+  await upsertSession(chatId, userId, "idle" as any, draft as any);
   await ctx.answerCallbackQuery({ text: `Taglia: ${size}` });
   await showPackageSelection(ctx, draft);
 }
 
 async function handlePackageCountCallback(ctx: Context) {
   const userId = ctx.from!.id;
-  const draft = draftStore.get(userId);
-  if (!draft) {
+  const chatId = ctx.chat!.id;
+
+  const session = await getSession(chatId);
+  if (!session) {
     await ctx.answerCallbackQuery({ text: "Sessione scaduta", show_alert: true });
     return;
   }
 
+  const draft = session.order_draft as OrderDraft;
   draft.package_count = draft.package_count >= 4 ? 1 : draft.package_count + 1;
+
+  await upsertSession(chatId, userId, "idle" as any, draft as any);
   await ctx.answerCallbackQuery({ text: `Colli: ${draft.package_count}` });
   await showPackageSelection(ctx, draft);
 }
 
 async function handlePackageFragileCallback(ctx: Context) {
   const userId = ctx.from!.id;
-  const draft = draftStore.get(userId);
-  if (!draft) {
+  const chatId = ctx.chat!.id;
+
+  const session = await getSession(chatId);
+  if (!session) {
     await ctx.answerCallbackQuery({ text: "Sessione scaduta", show_alert: true });
     return;
   }
 
+  const draft = session.order_draft as OrderDraft;
   draft.is_fragile = !draft.is_fragile;
+
+  await upsertSession(chatId, userId, "idle" as any, draft as any);
   await ctx.answerCallbackQuery({ text: draft.is_fragile ? "Fragile: SI" : "Fragile: NO" });
   await showPackageSelection(ctx, draft);
 }
 
 async function handleGenerateLinkCallback(ctx: Context) {
   const userId = ctx.from!.id;
-  const draft = draftStore.get(userId);
+  const chatId = ctx.chat!.id;
 
-  if (!draft || !draft.package_size) {
+  const session = await getSession(chatId);
+  if (!session) {
+    await ctx.answerCallbackQuery({ text: "Sessione scaduta. Usa /ordine", show_alert: true });
+    return;
+  }
+
+  const draft = session.order_draft as OrderDraft;
+  if (!draft.package_size) {
     await ctx.answerCallbackQuery({ text: "Seleziona taglia pacco", show_alert: true });
     return;
   }
@@ -168,16 +189,20 @@ async function handleGenerateLinkCallback(ctx: Context) {
 
     const { data: merchant } = await supabase
       .from(CONSTANTS.TABLE_MERCHANTS)
-      .select("pickup_address, default_payment_mode")
+      .select("pickup_address, default_payment_mode, business_name, address")
       .eq("id", draft.merchant_id)
       .single();
 
     const { error } = await supabase.from(CONSTANTS.TABLE_ORDERS).insert({
-      merchant_id: draft.merchant_id,
-      pickup_point: merchant?.pickup_address || "",
-      delivery_address: "",
-      recipient_name: "",
-      recipient_phone: "",
+      dealer_contact_id: draft.merchant_id, // Schema uses dealer_contact_id
+      restaurant_name: merchant?.business_name || "Merchant", // NOT NULL
+      restaurant_address: merchant?.address || merchant?.pickup_address || "",
+      pickup_address: merchant?.pickup_address || merchant?.address || "",
+      customer_address: "", // Cliente compilerà (NOT NULL ma può essere vuoto)
+      customer_name: "", // Cliente compilerà
+      customer_phone: "", // Cliente compilerà
+      distance_km: 0, // NOT NULL, placeholder
+      base_earning: 0, // NOT NULL, placeholder
       payment_mode: merchant?.default_payment_mode || "delivery_on_completion",
       source: "telegram_link",
       status: "pending",
@@ -204,7 +229,7 @@ Scadenza: 24 ore
       { reply_markup: { inline_keyboard: [] } }
     );
 
-    draftStore.delete(userId);
+    await deleteSession(chatId);
   } catch (err) {
     console.error("handleGenerateLinkCallback error:", err);
     await ctx.reply(`Errore generazione link: ${(err as Error).message}`);

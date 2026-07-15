@@ -24,8 +24,8 @@ const corsHeaders = {
 
 interface OrderData {
   id: string;
-  merchant_id: string;
-  pickup_point: string;
+  dealer_contact_id: string; // FK to dealers (schema uses dealer_contact_id)
+  pickup_address: string; // Text address (schema uses pickup_address)
   payment_mode: string;
   package_size: string;
   package_count: number;
@@ -33,9 +33,9 @@ interface OrderData {
   customer_token: string;
   token_expires_at: string;
   status: string;
-  delivery_address?: string;
-  recipient_name?: string;
-  recipient_phone?: string;
+  dropoff_address?: string; // Schema uses dropoff_address for delivery
+  customer_name?: string; // Schema uses customer_name
+  customer_phone?: string; // Schema uses customer_phone
   notes?: string;
 }
 
@@ -46,7 +46,12 @@ serve(async (req: Request) => {
   }
 
   const url = new URL(req.url);
-  const pathMatch = url.pathname.match(/^\/c\/([a-z0-9]+)$/);
+
+  // Supabase Edge Functions include function name in pathname
+  // Remove "/customer-page" prefix to get relative path
+  const relativePath = url.pathname.replace(/^\/customer-page/, '');
+
+  const pathMatch = relativePath.match(/^\/c\/([a-z0-9]+)$/);
 
   if (!pathMatch) {
     return new Response("Not Found", { status: 404 });
@@ -157,19 +162,24 @@ async function handlePost(token: string, req: Request): Promise<Response> {
 
   // Update ordine: compila dati cliente + trigger broadcast
   // Setta broadcast_tier=0 e broadcast_started_at per triggerare escalation-tick
+  const updateData: Record<string, unknown> = {
+    dropoff_address: deliveryAddress, // Schema uses dropoff_address
+    customer_name: recipientName, // Schema uses customer_name
+    customer_phone: recipientPhone, // Schema uses customer_phone
+    status: "pending", // Rimane pending, escalation-tick gestirà il broadcast
+    delivery_pin: deliveryPin,
+    broadcast_tier: 0, // Tier iniziale (top reputation)
+    broadcast_started_at: new Date().toISOString(), // Trigger broadcast
+  };
+
+  // Add notes only if column exists (might not be in schema)
+  if (notes) {
+    updateData.customer_address = deliveryAddress; // Use customer_address for full details if notes doesn't exist
+  }
+
   const { error: updateError } = await supabase
     .from("orders")
-    .update({
-      delivery_address: deliveryAddress,
-      recipient_name: recipientName,
-      recipient_phone: recipientPhone,
-      notes: notes || null,
-      status: "pending", // Rimane pending, escalation-tick gestirà il broadcast
-      delivery_pin: deliveryPin,
-      broadcast_tier: 0, // Tier iniziale (top reputation)
-      broadcast_started_at: new Date().toISOString(), // Trigger broadcast
-      updated_at: new Date().toISOString(),
-    })
+    .update(updateData)
     .eq("id", order.id);
 
   if (updateError) {
@@ -387,7 +397,7 @@ function renderForm(
     <div class="order-info">
       <strong>Dettagli ordine:</strong><br>
       📦 Taglia: ${order.package_size || "N/A"}<br>
-      📍 Ritiro: ${order.pickup_point}<br>
+      📍 Ritiro: ${order.pickup_address}<br>
       💳 Pagamento: ${formatPaymentMode(order.payment_mode)}
     </div>
 

@@ -121,7 +121,11 @@ async function handleGet(token: string, supabase: any): Promise<Response> {
   // Verifica stato (ordine già compilato = customer_name valorizzato)
   if (order.status !== "pending" || order.customer_name) {
     return new Response(
-      JSON.stringify({ valid: false, reason: "already_sent" }),
+      JSON.stringify({
+        valid: false,
+        reason: "already_sent",
+        pin: order.delivery_pin || undefined  // Includi PIN se esiste
+      }),
       {
         status: 200,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -221,6 +225,8 @@ async function handlePost(token: string, req: Request, supabase: any): Promise<R
 
   if (!deliveryAddress) {
     errors.push("Indirizzo di consegna obbligatorio");
+  } else if (!isValidAddress(deliveryAddress)) {
+    errors.push("Inserisci indirizzo completo: via, civico, città o CAP");
   }
 
   if (errors.length > 0) {
@@ -314,6 +320,22 @@ function isValidItalianPhone(phone: string): boolean {
   // Pattern: +393xxxxxxxx, 393xxxxxxxx, 3xxxxxxxx (9-10 cifre)
   const pattern = /^(\+39|39)?3\d{8,9}$/;
   return pattern.test(clean);
+}
+
+/**
+ * Validazione indirizzo completo
+ * Deve contenere almeno un numero E (una città O un CAP 5 cifre)
+ */
+function isValidAddress(address: string): boolean {
+  // Deve contenere almeno un numero (civico)
+  const hasNumber = /\d/.test(address);
+  if (!hasNumber) return false;
+
+  // Deve contenere una città (parola di almeno 3 lettere) O un CAP (5 cifre)
+  const hasCity = /[a-zA-ZÀ-ÿ]{3,}/.test(address);
+  const hasCAP = /\b\d{5}\b/.test(address);
+
+  return hasCity || hasCAP;
 }
 
 /**

@@ -466,7 +466,10 @@ function renderForm(
 </body>
 </html>`;
 
-  return new Response(html, {
+  // Force HTML MIME type using Blob
+  const blob = new Blob([html], { type: "text/html; charset=utf-8" });
+
+  return new Response(blob, {
     status: 200,
     headers: {
       "Content-Type": "text/html; charset=utf-8",
@@ -514,7 +517,9 @@ function renderErrorPage(message: string): Response {
 </body>
 </html>`;
 
-  return new Response(html, {
+  const blob = new Blob([html], { type: "text/html; charset=utf-8" });
+
+  return new Response(blob, {
     status: 400,
     headers: {
       "Content-Type": "text/html; charset=utf-8",
@@ -562,7 +567,9 @@ function renderStatusPage(message: string): Response {
 </body>
 </html>`;
 
-  return new Response(html, {
+  const blob = new Blob([html], { type: "text/html; charset=utf-8" });
+
+  return new Response(blob, {
     status: 200,
     headers: {
       "Content-Type": "text/html; charset=utf-8",

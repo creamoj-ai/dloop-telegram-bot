@@ -55,7 +55,7 @@ async function handleOrdine(ctx: Context) {
 
   const draft: OrderDraft = {
     merchant_id: merchant.id,
-    package_size: merchant.default_package_size || undefined,
+    package_size: undefined, // User MUST select size (no default pre-fill)
     package_count: 1,
     is_fragile: false,
   };

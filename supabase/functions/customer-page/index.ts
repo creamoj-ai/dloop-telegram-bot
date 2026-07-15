@@ -325,18 +325,33 @@ function isValidItalianPhone(phone: string): boolean {
 
 /**
  * Validazione indirizzo completo
- * Deve contenere almeno un numero E (una città O un CAP 5 cifre)
+ * Deve contenere numero E (CAP O virgola+località O 4+ parole con città)
  */
 function isValidAddress(address: string): boolean {
   // Deve contenere almeno un numero (civico)
   const hasNumber = /\d/.test(address);
   if (!hasNumber) return false;
 
-  // Deve contenere una città (parola di almeno 3 lettere) O un CAP (5 cifre)
-  const hasCity = /[a-zA-ZÀ-ÿ]{3,}/.test(address);
+  // CASO 1: Contiene CAP (5 cifre consecutive)
   const hasCAP = /\b\d{5}\b/.test(address);
+  if (hasCAP) return true;
 
-  return hasCity || hasCAP;
+  // CASO 2: Virgola seguita da località (es: "Via Roma 123, Napoli")
+  const hasCommaLocation = /,\s*[a-zA-ZÀ-ÿ]{2,}/.test(address);
+  if (hasCommaLocation) return true;
+
+  // CASO 3: Almeno 4 parole E ultima parola è città (min 3 lettere)
+  // Es: "Via Roma 123 Napoli" (via + nome + civico + città)
+  const words = address.trim().split(/\s+/);
+  if (words.length >= 4) {
+    const lastWord = words[words.length - 1];
+    // Ultima parola deve essere testo di almeno 3 lettere (città)
+    if (/^[a-zA-ZÀ-ÿ]{3,}$/.test(lastWord)) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 /**

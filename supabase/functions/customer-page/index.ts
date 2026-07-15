@@ -10,10 +10,9 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.0";
 
 // Configurazione
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
+const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const TELEGRAM_BOT_TOKEN = Deno.env.get("TELEGRAM_BOT_TOKEN")!;
-
-const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
 // CORS headers
 const corsHeaders = {
@@ -59,11 +58,20 @@ serve(async (req: Request) => {
 
   const token = pathMatch[1];
 
+  // Create Supabase client for this request (uses service role to allow anonymous access)
+  const supabaseClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false,
+      detectSessionInUrl: false
+    }
+  });
+
   try {
     if (req.method === "GET") {
-      return await handleGet(token);
+      return await handleGet(token, supabaseClient);
     } else if (req.method === "POST") {
-      return await handlePost(token, req);
+      return await handlePost(token, req, supabaseClient);
     } else {
       return new Response("Method Not Allowed", { status: 405 });
     }
@@ -71,7 +79,12 @@ serve(async (req: Request) => {
     console.error("[customer-page] Error:", error);
     return new Response("Internal Server Error", {
       status: 500,
-      headers: { "Content-Type": "text/html; charset=utf-8" }
+      headers: {
+        "Content-Type": "text/html; charset=utf-8",
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type",
+      }
     });
   }
 });
@@ -79,8 +92,8 @@ serve(async (req: Request) => {
 /**
  * GET /c/{token} → mostra form se ordine valido e pending
  */
-async function handleGet(token: string): Promise<Response> {
-  const order = await getOrderByToken(token);
+async function handleGet(token: string, supabase: any): Promise<Response> {
+  const order = await getOrderByToken(token, supabase);
 
   if (!order) {
     return renderErrorPage("Link non valido o scaduto");
@@ -105,8 +118,8 @@ async function handleGet(token: string): Promise<Response> {
 /**
  * POST /c/{token} → salva dati, genera PIN, dispatch
  */
-async function handlePost(token: string, req: Request): Promise<Response> {
-  const order = await getOrderByToken(token);
+async function handlePost(token: string, req: Request, supabase: any): Promise<Response> {
+  const order = await getOrderByToken(token, supabase);
 
   if (!order) {
     return renderErrorPage("Link non valido o scaduto");
@@ -201,7 +214,7 @@ async function handlePost(token: string, req: Request): Promise<Response> {
 /**
  * Recupera ordine da customer_token
  */
-async function getOrderByToken(token: string): Promise<OrderData | null> {
+async function getOrderByToken(token: string, supabase: any): Promise<OrderData | null> {
   const { data, error } = await supabase
     .from("orders")
     .select("*")
@@ -456,8 +469,7 @@ function renderForm(
   return new Response(html, {
     status: 200,
     headers: {
-      ...corsHeaders,
-      "Content-Type": "text/html; charset=utf-8"
+      "Content-Type": "text/html; charset=utf-8",
     },
   });
 }
@@ -505,8 +517,7 @@ function renderErrorPage(message: string): Response {
   return new Response(html, {
     status: 400,
     headers: {
-      ...corsHeaders,
-      "Content-Type": "text/html; charset=utf-8"
+      "Content-Type": "text/html; charset=utf-8",
     },
   });
 }
@@ -554,8 +565,7 @@ function renderStatusPage(message: string): Response {
   return new Response(html, {
     status: 200,
     headers: {
-      ...corsHeaders,
-      "Content-Type": "text/html; charset=utf-8"
+      "Content-Type": "text/html; charset=utf-8",
     },
   });
 }
@@ -649,8 +659,7 @@ function renderSuccessPage(pin: string): Response {
   return new Response(html, {
     status: 200,
     headers: {
-      ...corsHeaders,
-      "Content-Type": "text/html; charset=utf-8"
+      "Content-Type": "text/html; charset=utf-8",
     },
   });
 }

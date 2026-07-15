@@ -14,9 +14,9 @@ const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const TELEGRAM_BOT_TOKEN = Deno.env.get("TELEGRAM_BOT_TOKEN")!;
 
-// CORS headers
+// CORS headers (chiamate da https://dloop.it)
 const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Origin": "https://dloop.it",
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type",
 };
@@ -90,60 +90,123 @@ serve(async (req: Request) => {
 });
 
 /**
- * GET /c/{token} → mostra form se ordine valido e pending
+ * GET /c/{token} → ritorna JSON con info ordine o errore
  */
 async function handleGet(token: string, supabase: any): Promise<Response> {
   const order = await getOrderByToken(token, supabase);
 
   if (!order) {
-    return renderErrorPage("Link non valido o scaduto");
+    return new Response(
+      JSON.stringify({ valid: false, reason: "not_found" }),
+      {
+        status: 200,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      }
+    );
   }
 
   // Verifica scadenza token
   const now = new Date();
   const expiresAt = new Date(order.token_expires_at);
   if (now > expiresAt) {
-    return renderErrorPage("Link scaduto. Contatta il merchant.");
+    return new Response(
+      JSON.stringify({ valid: false, reason: "expired" }),
+      {
+        status: 200,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      }
+    );
   }
 
-  // Verifica stato
-  if (order.status !== "pending") {
-    return renderStatusPage("Ordine già inviato");
+  // Verifica stato (ordine già compilato = customer_name valorizzato)
+  if (order.status !== "pending" || order.customer_name) {
+    return new Response(
+      JSON.stringify({ valid: false, reason: "already_sent" }),
+      {
+        status: 200,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      }
+    );
   }
 
-  // Mostra form
-  return renderForm(token, order);
+  // Ritorna dati ordine (solo campi necessari per il form, no dati sensibili)
+  return new Response(
+    JSON.stringify({
+      valid: true,
+      order: {
+        package_size: order.package_size,
+        package_count: order.package_count,
+        is_fragile: order.is_fragile,
+        pickup_address: order.pickup_address,
+        payment_mode: order.payment_mode,
+      },
+    }),
+    {
+      status: 200,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    }
+  );
 }
 
 /**
- * POST /c/{token} → salva dati, genera PIN, dispatch
+ * POST /c/{token} → salva dati JSON, genera PIN, dispatch, ritorna JSON
  */
 async function handlePost(token: string, req: Request, supabase: any): Promise<Response> {
   const order = await getOrderByToken(token, supabase);
 
   if (!order) {
-    return renderErrorPage("Link non valido o scaduto");
+    return new Response(
+      JSON.stringify({ success: false, error: "Link non valido o scaduto" }),
+      {
+        status: 200,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      }
+    );
   }
 
   // Verifica scadenza e stato
   const now = new Date();
   const expiresAt = new Date(order.token_expires_at);
   if (now > expiresAt) {
-    return renderErrorPage("Link scaduto. Contatta il merchant.");
+    return new Response(
+      JSON.stringify({ success: false, error: "Link scaduto. Contatta il merchant." }),
+      {
+        status: 200,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      }
+    );
   }
 
-  if (order.status !== "pending") {
-    return renderStatusPage("Ordine già inviato");
+  if (order.status !== "pending" || order.customer_name) {
+    return new Response(
+      JSON.stringify({ success: false, error: "Ordine già inviato" }),
+      {
+        status: 200,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      }
+    );
   }
 
-  // Parse form data
-  const formData = await req.formData();
-  const recipientName = formData.get("recipient_name")?.toString().trim() || "";
-  const recipientPhone = formData.get("recipient_phone")?.toString().trim() || "";
-  const deliveryAddress = formData.get("delivery_address")?.toString().trim() || "";
-  const notes = formData.get("notes")?.toString().trim() || "";
+  // Parse JSON body
+  let body: any;
+  try {
+    body = await req.json();
+  } catch (e) {
+    return new Response(
+      JSON.stringify({ success: false, error: "Body JSON non valido" }),
+      {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      }
+    );
+  }
 
-  // Validazione
+  const recipientName = body.recipient_name?.toString().trim() || "";
+  const recipientPhone = body.recipient_phone?.toString().trim() || "";
+  const deliveryAddress = body.delivery_address?.toString().trim() || "";
+  const notes = body.notes?.toString().trim() || "";
+
+  // Validazione (stessa logica di prima)
   const errors: string[] = [];
 
   if (!recipientName) {
@@ -161,13 +224,13 @@ async function handlePost(token: string, req: Request, supabase: any): Promise<R
   }
 
   if (errors.length > 0) {
-    // Ri-mostra form con errori e dati già inseriti
-    return renderForm(token, order, errors, {
-      recipient_name: recipientName,
-      recipient_phone: recipientPhone,
-      delivery_address: deliveryAddress,
-      notes,
-    });
+    return new Response(
+      JSON.stringify({ success: false, error: errors.join(", ") }),
+      {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      }
+    );
   }
 
   // Genera PIN 4 cifre
@@ -197,7 +260,13 @@ async function handlePost(token: string, req: Request, supabase: any): Promise<R
 
   if (updateError) {
     console.error("[customer-page] Update error:", updateError);
-    return renderErrorPage("Errore durante il salvataggio. Riprova.");
+    return new Response(
+      JSON.stringify({ success: false, error: "Errore durante il salvataggio. Riprova." }),
+      {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      }
+    );
   }
 
   console.log(
@@ -207,8 +276,14 @@ async function handlePost(token: string, req: Request, supabase: any): Promise<R
   // Invia PIN al cliente via WhatsApp (stub per ora)
   await sendPinToCustomer(recipientPhone, deliveryPin, order.id);
 
-  // Redirect a pagina conferma
-  return renderSuccessPage(deliveryPin);
+  // Ritorna success con PIN (WhatsApp è stub, frontend lo mostrerà)
+  return new Response(
+    JSON.stringify({ success: true, pin: deliveryPin }),
+    {
+      status: 200,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    }
+  );
 }
 
 /**
@@ -283,400 +358,4 @@ async function sendPinToCustomer(
   // });
 
   console.log(`[customer-page] PIN ${pin} inviato a ${phone}`);
-}
-
-
-// ============================================================================
-// RENDERING HTML
-// ============================================================================
-
-function renderForm(
-  token: string,
-  order: OrderData,
-  errors: string[] = [],
-  formData?: Record<string, string>
-): Response {
-  const html = `<!DOCTYPE html>
-<html lang="it">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Completa il tuo ordine | Dloop</title>
-  <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      background: #f5f5f5;
-      color: #333;
-      line-height: 1.6;
-      padding: 20px 16px;
-    }
-    .container {
-      max-width: 500px;
-      margin: 0 auto;
-      background: white;
-      border-radius: 12px;
-      padding: 24px;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-    }
-    h1 {
-      font-size: 24px;
-      margin-bottom: 8px;
-      color: #FF6B00;
-    }
-    .subtitle {
-      font-size: 14px;
-      color: #666;
-      margin-bottom: 24px;
-    }
-    .order-info {
-      background: #f9f9f9;
-      padding: 16px;
-      border-radius: 8px;
-      margin-bottom: 24px;
-      font-size: 14px;
-    }
-    .order-info strong {
-      color: #FF6B00;
-    }
-    .errors {
-      background: #ffebee;
-      color: #c62828;
-      padding: 12px;
-      border-radius: 8px;
-      margin-bottom: 16px;
-      font-size: 14px;
-    }
-    .errors ul {
-      margin-left: 20px;
-    }
-    label {
-      display: block;
-      font-weight: 600;
-      margin-bottom: 6px;
-      font-size: 14px;
-      color: #333;
-    }
-    input, textarea {
-      width: 100%;
-      padding: 12px;
-      border: 1px solid #ddd;
-      border-radius: 8px;
-      font-size: 16px;
-      margin-bottom: 16px;
-      font-family: inherit;
-    }
-    input:focus, textarea:focus {
-      outline: none;
-      border-color: #FF6B00;
-    }
-    textarea {
-      resize: vertical;
-      min-height: 80px;
-    }
-    .optional {
-      font-weight: normal;
-      color: #999;
-      font-size: 12px;
-    }
-    button {
-      width: 100%;
-      padding: 16px;
-      background: #FF6B00;
-      color: white;
-      border: none;
-      border-radius: 8px;
-      font-size: 18px;
-      font-weight: 600;
-      cursor: pointer;
-      transition: background 0.2s;
-    }
-    button:active {
-      background: #e66000;
-    }
-    .hint {
-      font-size: 12px;
-      color: #999;
-      margin-top: -12px;
-      margin-bottom: 16px;
-    }
-  </style>
-</head>
-<body>
-  <div class="container">
-    <h1>📦 Completa il tuo ordine</h1>
-    <p class="subtitle">Inserisci i dettagli di consegna per ricevere il pacco</p>
-
-    <div class="order-info">
-      <strong>Dettagli ordine:</strong><br>
-      📦 Taglia: ${order.package_size || "N/A"}<br>
-      📍 Ritiro: ${order.pickup_address}<br>
-      💳 Pagamento: ${formatPaymentMode(order.payment_mode)}
-    </div>
-
-    ${errors.length > 0 ? `
-    <div class="errors">
-      <strong>⚠️ Correggi i seguenti errori:</strong>
-      <ul>
-        ${errors.map((e) => `<li>${e}</li>`).join("")}
-      </ul>
-    </div>
-    ` : ""}
-
-    <form method="POST" action="/c/${token}">
-      <label for="recipient_name">Nome destinatario *</label>
-      <input
-        type="text"
-        id="recipient_name"
-        name="recipient_name"
-        required
-        placeholder="Mario Rossi"
-        value="${formData?.recipient_name || ""}"
-      >
-
-      <label for="recipient_phone">Telefono *</label>
-      <input
-        type="tel"
-        id="recipient_phone"
-        name="recipient_phone"
-        required
-        placeholder="+39 333 1234567"
-        value="${formData?.recipient_phone || ""}"
-      >
-      <p class="hint">Formato: +39 3xx xxxxxxx</p>
-
-      <label for="delivery_address">Indirizzo di consegna *</label>
-      <textarea
-        id="delivery_address"
-        name="delivery_address"
-        required
-        placeholder="Via Roma 123, 80100 Napoli (NA)"
-      >${formData?.delivery_address || ""}</textarea>
-
-      <label for="notes">Note <span class="optional">(opzionale)</span></label>
-      <textarea
-        id="notes"
-        name="notes"
-        placeholder="Es: citofono, piano, istruzioni particolari..."
-      >${formData?.notes || ""}</textarea>
-
-      <button type="submit">✅ Conferma ordine</button>
-    </form>
-  </div>
-</body>
-</html>`;
-
-  // Force HTML MIME type using Blob
-  const blob = new Blob([html], { type: "text/html; charset=utf-8" });
-
-  return new Response(blob, {
-    status: 200,
-    headers: {
-      "Content-Type": "text/html; charset=utf-8",
-    },
-  });
-}
-
-function renderErrorPage(message: string): Response {
-  const html = `<!DOCTYPE html>
-<html lang="it">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Errore | Dloop</title>
-  <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      background: #f5f5f5;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      min-height: 100vh;
-      padding: 20px;
-    }
-    .card {
-      background: white;
-      padding: 40px 32px;
-      border-radius: 12px;
-      text-align: center;
-      max-width: 400px;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-    }
-    .icon { font-size: 64px; margin-bottom: 16px; }
-    h1 { font-size: 24px; margin-bottom: 12px; color: #333; }
-    p { color: #666; font-size: 16px; }
-  </style>
-</head>
-<body>
-  <div class="card">
-    <div class="icon">⚠️</div>
-    <h1>Errore</h1>
-    <p>${message}</p>
-  </div>
-</body>
-</html>`;
-
-  const blob = new Blob([html], { type: "text/html; charset=utf-8" });
-
-  return new Response(blob, {
-    status: 400,
-    headers: {
-      "Content-Type": "text/html; charset=utf-8",
-    },
-  });
-}
-
-function renderStatusPage(message: string): Response {
-  const html = `<!DOCTYPE html>
-<html lang="it">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Stato ordine | Dloop</title>
-  <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      background: #f5f5f5;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      min-height: 100vh;
-      padding: 20px;
-    }
-    .card {
-      background: white;
-      padding: 40px 32px;
-      border-radius: 12px;
-      text-align: center;
-      max-width: 400px;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-    }
-    .icon { font-size: 64px; margin-bottom: 16px; }
-    h1 { font-size: 24px; margin-bottom: 12px; color: #333; }
-    p { color: #666; font-size: 16px; }
-  </style>
-</head>
-<body>
-  <div class="card">
-    <div class="icon">📦</div>
-    <h1>Ordine già gestito</h1>
-    <p>${message}</p>
-  </div>
-</body>
-</html>`;
-
-  const blob = new Blob([html], { type: "text/html; charset=utf-8" });
-
-  return new Response(blob, {
-    status: 200,
-    headers: {
-      "Content-Type": "text/html; charset=utf-8",
-    },
-  });
-}
-
-function renderSuccessPage(pin: string): Response {
-  const html = `<!DOCTYPE html>
-<html lang="it">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Ordine confermato | Dloop</title>
-  <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      background: #f5f5f5;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      min-height: 100vh;
-      padding: 20px;
-    }
-    .card {
-      background: white;
-      padding: 40px 32px;
-      border-radius: 12px;
-      text-align: center;
-      max-width: 450px;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-    }
-    .icon { font-size: 72px; margin-bottom: 16px; }
-    h1 {
-      font-size: 28px;
-      margin-bottom: 12px;
-      color: #FF6B00;
-    }
-    p {
-      color: #666;
-      font-size: 16px;
-      margin-bottom: 24px;
-      line-height: 1.6;
-    }
-    .pin-box {
-      background: #fff3e0;
-      border: 2px solid #FF6B00;
-      border-radius: 8px;
-      padding: 20px;
-      margin: 24px 0;
-    }
-    .pin-label {
-      font-size: 14px;
-      color: #666;
-      margin-bottom: 8px;
-    }
-    .pin {
-      font-size: 48px;
-      font-weight: bold;
-      color: #FF6B00;
-      letter-spacing: 8px;
-    }
-    .note {
-      font-size: 14px;
-      color: #999;
-      margin-top: 24px;
-    }
-  </style>
-</head>
-<body>
-  <div class="card">
-    <div class="icon">✅</div>
-    <h1>Ordine ricevuto!</h1>
-    <p>Un rider Dloop ti contatterà a breve per la consegna.</p>
-
-    <div class="pin-box">
-      <div class="pin-label">Il tuo PIN di consegna:</div>
-      <div class="pin">${pin}</div>
-    </div>
-
-    <p>
-      Comunica questo PIN al rider al momento della consegna.<br>
-      Lo riceverai anche via WhatsApp.
-    </p>
-
-    <p class="note">
-      💬 Per qualsiasi problema, contatta il merchant che ha creato l'ordine.
-    </p>
-  </div>
-</body>
-</html>`;
-
-  return new Response(html, {
-    status: 200,
-    headers: {
-      "Content-Type": "text/html; charset=utf-8",
-    },
-  });
-}
-
-function formatPaymentMode(mode: string): string {
-  const modes: Record<string, string> = {
-    prepaid: "Prepagato",
-    delivery_on_completion: "Cliente paga al rider",
-    cod: "Contrassegno",
-    merchant_external: "Gestito dal merchant",
-  };
-  return modes[mode] || mode;
 }

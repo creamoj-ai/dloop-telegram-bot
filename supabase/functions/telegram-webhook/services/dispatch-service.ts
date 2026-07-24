@@ -10,6 +10,7 @@ import { CONSTANTS } from "../shared/config.ts";
 import { Order, Rider, RiderStatus, OrderStatus } from "../shared/types.ts";
 import { Bot } from "../deps.ts";
 import { notifyMerchant } from "./notification-service.ts";
+import { sendRiderNotification } from "./telegram-api.ts";
 
 /**
  * Broadcast ordine a rider in zona (tier 0 = top reputation).
@@ -177,45 +178,50 @@ async function getRidersByTier(
 
 /**
  * Notifica rider via Telegram con bottoni accept/decline.
+ * USA BOT RIDER separato (via HTTP API diretta, no Bot instance).
  */
 async function notifyRiders(bot: Bot, orderId: string, order: Order, riders: Rider[]): Promise<void> {
   for (const rider of riders) {
     if (!rider.telegram_user_id) continue;
 
+    // Build info pacco (taglia, colli, fragile)
+    const packageInfo = [];
+    if (order.package_size) packageInfo.push(`📦 ${order.package_size}`);
+    if (order.package_count && order.package_count > 1) packageInfo.push(`${order.package_count} colli`);
+    if (order.is_fragile) packageInfo.push(`⚠️ Fragile`);
+
     const message = `
 🚚 **NUOVO ORDINE**
 
 Ordine: #${orderId.slice(0, 8).toUpperCase()}
-Ritiro: ${order.pickup_point}
-Consegna: ${order.delivery_address}
-Destinatario: ${order.recipient_name} (${order.recipient_phone})
-${order.time_window ? `Finestra: ${order.time_window}` : ""}
-${order.notes ? `Note: ${order.notes}` : ""}
-${order.delivery_fee_shown ? `💰 Consegna: €${order.delivery_fee_shown.toFixed(2)}` : ""}
+📍 Ritiro: ${order.pickup_point}
+📍 Consegna: ${order.delivery_address}
+👤 Destinatario: ${order.recipient_name}
+📱 Telefono: ${order.recipient_phone}
+${packageInfo.length > 0 ? `📦 Pacco: ${packageInfo.join(' • ')}` : ""}
+${order.time_window ? `⏰ Finestra: ${order.time_window}` : ""}
+${order.notes ? `📝 Note: ${order.notes}` : ""}
+${order.delivery_fee_shown ? `💰 Compenso: €${order.delivery_fee_shown.toFixed(2)}` : ""}
 
 **Accetti questo ordine?**
     `.trim();
 
     try {
-      await bot.api.sendMessage(rider.telegram_user_id, message, {
-        parse_mode: "Markdown",
-        reply_markup: {
-          inline_keyboard: [
-            [
-              {
-                text: "✅ Accetto",
-                callback_data: `${CONSTANTS.CALLBACK_ACCEPT_ORDER}_${orderId}`,
-              },
-              {
-                text: "❌ Rifiuto",
-                callback_data: `${CONSTANTS.CALLBACK_DECLINE_ORDER}_${orderId}`,
-              },
-            ],
+      // Usa telegram-api.ts per inviare via bot RIDER (HTTP API diretta)
+      const sent = await sendRiderNotification(
+        rider.telegram_user_id,
+        message,
+        [
+          [
+            { text: "✅ Accetto", callback_data: `accept_order_${orderId}` },
+            { text: "❌ Rifiuto", callback_data: `decline_order_${orderId}` },
           ],
-        },
-      });
+        ]
+      );
 
-      console.log(`[dispatch-service] Rider ${rider.id} notificato per ordine ${orderId}`);
+      if (sent) {
+        console.log(`[dispatch-service] Rider ${rider.id} notificato per ordine ${orderId}`);
+      }
     } catch (err) {
       console.error("[dispatch-service] Errore notifica rider Telegram:", err);
     }

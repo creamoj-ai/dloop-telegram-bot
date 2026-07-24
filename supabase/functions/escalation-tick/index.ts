@@ -7,7 +7,6 @@
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.0";
-import { Bot } from "https://esm.sh/grammy@1.30.0";
 
 // Shared config
 const CONFIG = {
@@ -32,7 +31,6 @@ const CONFIG = {
 };
 
 const supabase = createClient(CONFIG.supabase.url, CONFIG.supabase.serviceRoleKey);
-const bot = new Bot(CONFIG.telegram.token);
 
 serve(async (req: Request) => {
   // CORS preflight
@@ -164,37 +162,68 @@ async function getRidersByTier(
 
 /**
  * Notifica rider via Telegram (bottoni accept/decline).
+ * USA BOT RIDER separato (via HTTP API diretta, no Bot instance).
  */
 async function notifyRiders(orderId: string, order: any, riders: any[]) {
+  const TELEGRAM_RIDER_BOT_TOKEN = Deno.env.get("TELEGRAM_RIDER_BOT_TOKEN") || "";
+
+  if (!TELEGRAM_RIDER_BOT_TOKEN) {
+    console.error("[escalation-tick] TELEGRAM_RIDER_BOT_TOKEN non configurato");
+    return;
+  }
+
   for (const rider of riders) {
     if (!rider.telegram_user_id) continue;
 
+    // Build info pacco (taglia, colli, fragile)
+    const packageInfo = [];
+    if (order.package_size) packageInfo.push(`📦 ${order.package_size}`);
+    if (order.package_count && order.package_count > 1) packageInfo.push(`${order.package_count} colli`);
+    if (order.is_fragile) packageInfo.push(`⚠️ Fragile`);
+
     const message = `
-🚚 **NUOVO ORDINE (escalation tier ${order.broadcast_tier})**
+🚚 **NUOVO ORDINE** (tier ${order.broadcast_tier})
 
 Ordine: #${orderId.slice(0, 8).toUpperCase()}
-Ritiro: ${order.pickup_point}
-Consegna: ${order.delivery_address}
-Destinatario: ${order.recipient_name} (${order.recipient_phone})
-${order.time_window ? `Finestra: ${order.time_window}` : ""}
-${order.notes ? `Note: ${order.notes}` : ""}
-${order.delivery_fee_shown ? `💰 Consegna: €${order.delivery_fee_shown.toFixed(2)}` : ""}
+📍 Ritiro: ${order.pickup_point}
+📍 Consegna: ${order.delivery_address}
+👤 Destinatario: ${order.recipient_name}
+📱 Telefono: ${order.recipient_phone}
+${packageInfo.length > 0 ? `📦 Pacco: ${packageInfo.join(' • ')}` : ""}
+${order.time_window ? `⏰ Finestra: ${order.time_window}` : ""}
+${order.notes ? `📝 Note: ${order.notes}` : ""}
+${order.delivery_fee_shown ? `💰 Compenso: €${order.delivery_fee_shown.toFixed(2)}` : ""}
 
 **Accetti questo ordine?**
     `.trim();
 
     try {
-      await bot.api.sendMessage(rider.telegram_user_id, message, {
-        parse_mode: "Markdown",
-        reply_markup: {
-          inline_keyboard: [
-            [
-              { text: "✅ Accetto", callback_data: `accept_order_${orderId}` },
-              { text: "❌ Rifiuto", callback_data: `decline_order_${orderId}` },
+      // Invia via HTTP API diretta (bot rider separato)
+      const url = `https://api.telegram.org/bot${TELEGRAM_RIDER_BOT_TOKEN}/sendMessage`;
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          chat_id: rider.telegram_user_id,
+          text: message,
+          parse_mode: "Markdown",
+          reply_markup: {
+            inline_keyboard: [
+              [
+                { text: "✅ Accetto", callback_data: `accept_order_${orderId}` },
+                { text: "❌ Rifiuto", callback_data: `decline_order_${orderId}` },
+              ],
             ],
-          ],
-        },
+          },
+        }),
       });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error(`[escalation-tick] Error notifying rider ${rider.id}:`, errorText);
+      } else {
+        console.log(`[escalation-tick] Rider ${rider.id} notificato (tier ${order.broadcast_tier})`);
+      }
     } catch (err) {
       console.error(`[escalation-tick] Error notifying rider ${rider.id}:`, err);
     }

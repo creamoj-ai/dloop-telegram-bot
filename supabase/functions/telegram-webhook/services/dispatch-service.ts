@@ -41,8 +41,18 @@ export async function assignRider(
     return null;
   }
 
-  const merchantLat = order.dealers.location?.latitude;
-  const merchantLon = order.dealers.location?.longitude;
+  // Parse location from PostGIS format "(lon,lat)"
+  let merchantLat: number | null = null;
+  let merchantLon: number | null = null;
+
+  if (order.dealers?.location) {
+    const locationStr = String(order.dealers.location);
+    const match = locationStr.match(/\(([\d.]+),([\d.]+)\)/);
+    if (match) {
+      merchantLon = parseFloat(match[1]);
+      merchantLat = parseFloat(match[2]);
+    }
+  }
 
   if (!merchantLat || !merchantLon) {
     console.warn("[dispatch-service] Merchant location mancante, broadcast saltato");

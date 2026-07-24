@@ -27,6 +27,7 @@ export function registerCallbacks(bot: Bot) {
   bot.callbackQuery(CONSTANTS.CALLBACK_PAYMENT_MODE_COD, handlePaymentModeCOD);
   bot.callbackQuery(CONSTANTS.CALLBACK_PAYMENT_MODE_PREPAID, handlePaymentModePrepaid);
   bot.callbackQuery(CONSTANTS.CALLBACK_CONFIRM_ORDER, handleConfirmOrder);
+  bot.callbackQuery(/^confirm_order_(.+)$/, handleConfirmOrderFromCustomer);
 
   // Rider accept/decline (regex per catturare order_id)
   bot.callbackQuery(/^accept_order_(.+)$/, handleAcceptOrder);
@@ -190,6 +191,34 @@ async function handleConfirmOrder(ctx: Context) {
     if ((err as Error).message.includes("token")) {
       await ctx.reply("❌ Saldo token insufficiente. Contatta admin per ricarica.");
     }
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// CONFIRM ORDER FROM CUSTOMER (ordini da form cliente)
+// ─────────────────────────────────────────────────────────────────────────
+
+async function handleConfirmOrderFromCustomer(ctx: Context) {
+  const orderId = (ctx.match as RegExpMatchArray)[1];
+
+  try {
+    await ctx.answerCallbackQuery();
+    await ctx.editMessageReplyMarkup({ reply_markup: { inline_keyboard: [] } });
+
+    // Assegna rider (broadcast tier 0)
+    const riderId = await assignRider(ctx.api as unknown as Bot, orderId);
+
+    const orderShortId = orderId.slice(0, 8).toUpperCase();
+    await ctx.editMessageText(
+      `✅ **Ordine #${orderShortId} confermato!**\n\n` +
+      `${riderId ? `Rider assegnato: #${riderId.slice(0, 8)}` : "Broadcast ai rider in corso..."}`,
+      { parse_mode: "Markdown" }
+    );
+
+    console.log(`[callbacks] Ordine ${orderId} confermato da merchant, broadcast avviato`);
+  } catch (err) {
+    console.error("[callbacks] handleConfirmOrderFromCustomer error:", err);
+    await ctx.answerCallbackQuery({ text: `Errore: ${(err as Error).message}`, show_alert: true });
   }
 }
 

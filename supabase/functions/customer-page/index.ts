@@ -7,12 +7,15 @@
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.0";
+import { Bot } from "https://esm.sh/grammy@1.30.0";
 
 // Configurazione
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const TELEGRAM_BOT_TOKEN = Deno.env.get("TELEGRAM_BOT_TOKEN")!;
+
+const bot = new Bot(TELEGRAM_BOT_TOKEN);
 
 // CORS headers (chiamate da https://dloop.it)
 const corsHeaders = {
@@ -39,6 +42,8 @@ interface OrderData {
 }
 
 serve(async (req: Request) => {
+  console.log("[customer-page] Request received:", req.method, req.url);
+
   // Handle CORS preflight
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -57,6 +62,7 @@ serve(async (req: Request) => {
   }
 
   const token = pathMatch[1];
+  console.log("[customer-page] Token extracted:", token);
 
   // Create Supabase client for this request (uses service role to allow anonymous access)
   const supabaseClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
@@ -275,9 +281,56 @@ async function handlePost(token: string, req: Request, supabase: any): Promise<R
     );
   }
 
-  console.log(
-    `[customer-page] Ordine ${order.id} completato, broadcast tier 0 attivato`
-  );
+  console.log(`[customer-page] Ordine ${order.id} completato dal cliente`);
+
+  // Notifica merchant con bottone conferma
+  try {
+    console.log(`[customer-page] Notifica merchant per ordine ${order.id}...`);
+
+    // Recupera telegram_chat_id del merchant
+    const { data: dealer } = await supabase
+      .from("dealers")
+      .select("telegram_chat_id")
+      .eq("id", order.dealer_contact_id)
+      .maybeSingle();
+
+    if (dealer?.telegram_chat_id) {
+      const orderShortId = order.id.slice(0, 8).toUpperCase();
+      const packageInfo = [];
+      if (order.package_size) packageInfo.push(order.package_size);
+      if (order.package_count > 1) packageInfo.push(`${order.package_count} colli`);
+      if (order.is_fragile) packageInfo.push("fragile");
+
+      const message =
+        `🟢 **NUOVO ORDINE DA CLIENTE**\n\n` +
+        `Ordine: #${orderShortId}\n` +
+        `Cliente: ${recipientName}\n` +
+        `Telefono: ${recipientPhone}\n` +
+        `Consegna: ${deliveryAddress}\n` +
+        `${packageInfo.length > 0 ? `Pacco: ${packageInfo.join(', ')}\n` : ''}` +
+        `\n**L'ordine è pronto per il ritiro?**`;
+
+      await bot.api.sendMessage(
+        dealer.telegram_chat_id,
+        message,
+        {
+          parse_mode: "Markdown",
+          reply_markup: {
+            inline_keyboard: [[
+              { text: "✅ Conferma ordine pronto", callback_data: `confirm_order_${order.id}` }
+            ]]
+          }
+        }
+      );
+
+      console.log(`[customer-page] Merchant notificato per ordine ${order.id}`);
+    } else {
+      console.warn(`[customer-page] Merchant senza telegram_chat_id per ordine ${order.id}`);
+    }
+  } catch (notifyError) {
+    console.error("[customer-page] Errore notifica merchant:", notifyError);
+    // Non bloccare la risposta al cliente se notifica merchant fallisce
+  }
 
   // Invia PIN al cliente via WhatsApp (stub per ora)
   await sendPinToCustomer(recipientPhone, deliveryPin, order.id);

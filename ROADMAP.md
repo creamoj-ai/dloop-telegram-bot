@@ -72,6 +72,85 @@ dropoff_address       TEXT
 
 ---
 
+## 🔧 HOTFIX — INFRASTRUTTURA BOT MERCHANT (14 Luglio 2026)
+
+**Problema**: Bot @dloop_saas_bot non riceveva richieste Telegram dopo blackout server. Log Edge Function mostravano solo boot/shutdown, zero invocazioni HTTP.
+
+### Root Cause Analysis:
+
+1. **JWT Verification attiva** sul gateway Supabase → Telegram riceveva 401 Unauthorized
+2. **Webhook secret mismatch** tra Telegram e variabile d'ambiente Supabase
+3. **Handler registration order errato** → `registerSessionHandler` catturava tutti i messaggi PRIMA che `/ordine` venisse registrato
+
+### Fix Applicati:
+
+#### 1. Gateway Configuration
+```bash
+# Deploy con JWT verification disabilitata per webhook pubblici
+supabase functions deploy telegram-webhook --no-verify-jwt --project-ref aqpwfurradxbnqvycvkm
+
+# Riconfigurazione webhook Telegram con secret token
+curl -X POST "https://api.telegram.org/bot{TOKEN}/setWebhook" \
+  -d "url=https://aqpwfurradxbnqvycvkm.supabase.co/functions/v1/telegram-webhook" \
+  -d "secret_token=dloop_webhook_f7e153779c31588a04dffdab6014c15c"
+
+# Sincronizzazione secret su Supabase
+supabase secrets set TELEGRAM_WEBHOOK_SECRET=dloop_webhook_f7e153779c31588a04dffdab6014c15c
+```
+
+#### 2. Code Fixes (Commit: 2b9881a)
+**File**: `supabase/functions/telegram-webhook/index.ts`
+- ✅ Spostato `registerCustomerLinkHandlers` PRIMA di `registerSessionHandler`
+  - Reason: `bot.on("message:text")` nel session handler catturava TUTTI i messaggi, impedendo ai comandi successivi di essere processati
+- ✅ Aggiunto boot diagnostics (logging token/secret validation)
+- ✅ Migrato da `serve()` deprecated a `Deno.serve()` native API
+- ✅ Aggiunto `bot.catch()` error handler per logging errori grammY
+- ✅ Aggiunto request logging dettagliato (method, URL, secret header presence)
+
+**File**: `handlers/commands.ts`, `handlers/customer-link.ts`
+- ✅ Aggiunto debug logging completo in `handleStart` e `handleOrdine`
+- ✅ Rimosso `bot.command("ordine")` duplicato (ora solo in customer-link.ts)
+
+#### 3. Database Cleanup
+- ✅ Rimossi merchant duplicati (2 record con stesso `telegram_user_id` causavano errore `.maybeSingle()`)
+- ✅ Inserito merchant test: Crescenzo Merchant Prova (ID Telegram: 6693621032)
+
+### Test End-to-End (Post-Fix):
+
+✅ `/start` → Risposta immediata con menu comandi
+✅ `/nuovo_ordine` → Flusso multi-step funzionante
+✅ `/ordine` → Form inline con taglie (S/M/L/XL) + bottoni Fragile/Genera Link
+✅ `/mia_reputazione` → Risposta corretta "Non registrato come rider"
+
+### Logging Implementato:
+
+```
+[boot] TELEGRAM_BOT_TOKEN set: true len: 46
+[boot] TELEGRAM_WEBHOOK_SECRET set: true len: 46
+[boot] customer-link handlers registered
+[boot] All handlers registered. Creating webhookCallback...
+[req] POST https://... | secret-header: present
+[req] Processing update via grammY...
+[handleOrdine] Command received from user: 6693621032
+[handleOrdine] Querying merchant...
+[handleOrdine] Merchant found: true
+[handleOrdine] Merchant ID: 44b8fb32-737f-4795-8d44-6350f1c79ecd
+[req] grammY returned status: 200
+```
+
+### Status Finale:
+
+✅ Bot @dloop_saas_bot **completamente operativo**
+✅ Webhook riceve correttamente tutte le richieste Telegram
+✅ Secret token validato da grammY
+✅ Handler registration order corretto
+✅ Debug logging completo per troubleshooting futuro
+✅ Codice committato e pushato su GitHub (main branch)
+
+**Impatto**: Nessuna modifica funzionale, solo fix infrastrutturale. Flusso merchant→cliente (Sprint 2) rimane intoccato.
+
+---
+
 ## 🚧 SPRINT 3 FASE 1 — RIDER BOT + BROADCAST FCFS
 
 **Obiettivo**: Bot rider separato con broadcast ordini + accept/reject First-Come-First-Served
@@ -448,6 +527,6 @@ curl https://api.telegram.org/bot{RIDER_BOT_TOKEN}/setWebhook \
 
 ---
 
-**Ultima modifica**: 2026-07-15 (post Sprint 2 closure)
+**Ultima modifica**: 2026-07-14 (hotfix infrastruttura bot merchant)
 **Owner**: Dloop Dev Team
-**Status**: Sprint 3 Fase 1 in avvio
+**Status**: Sprint 3 Fase 1 in avvio (post-hotfix, infra stabile)

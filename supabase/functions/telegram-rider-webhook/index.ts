@@ -61,10 +61,7 @@ bot.command("start", async (ctx) => {
       .insert({
         telegram_user_id: telegramUserId,
         name: firstName || username || `Rider_${telegramUserId}`,
-        phone: "DA_CONFIGURARE",
-        vehicle_type: "motorcycle",
-        vat_id: "DA_CONFIGURARE",
-        status: "offline",
+        status: "pending",
       });
 
     if (insertError) {
@@ -307,7 +304,7 @@ serve(async (req) => {
 
   try {
     const url = new URL(req.url);
-    if (url.searchParams.get("secret") !== Deno.env.get("TELEGRAM_WEBHOOK_SECRET")) {
+    if (url.searchParams.get("secret") !== Deno.env.get("TELEGRAM_RIDER_WEBHOOK_SECRET")) {
       return new Response("Unauthorized", { status: 401 });
     }
 

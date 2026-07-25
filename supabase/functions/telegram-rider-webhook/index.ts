@@ -121,7 +121,7 @@ bot.callbackQuery(/^accept_order_(.+)$/, async (ctx) => {
       })
       .eq("id", orderId)
       .eq("status", "pending") // ← RACE CONDITION GUARD
-      .select("id, pickup_point, delivery_address, recipient_name, recipient_phone, delivery_fee_shown")
+      .select("id, pickup_address, customer_address, customer_name, customer_phone, delivery_fee_shown")
       .maybeSingle();
 
     if (updateError) {
@@ -148,10 +148,10 @@ bot.callbackQuery(/^accept_order_(.+)$/, async (ctx) => {
     const orderShortId = orderId.slice(0, 8).toUpperCase();
     await ctx.reply(
       `✅ **Ordine #${orderShortId} assegnato a te!**\n\n` +
-      `📍 **Ritiro:** ${updatedOrder.pickup_point}\n` +
-      `📍 **Consegna:** ${updatedOrder.delivery_address}\n` +
-      `👤 **Destinatario:** ${updatedOrder.recipient_name}\n` +
-      `📱 **Telefono:** ${updatedOrder.recipient_phone}\n` +
+      `📍 **Ritiro:** ${updatedOrder.pickup_address}\n` +
+      `📍 **Consegna:** ${updatedOrder.customer_address}\n` +
+      `👤 **Destinatario:** ${updatedOrder.customer_name}\n` +
+      `📱 **Telefono:** ${updatedOrder.customer_phone}\n` +
       `${updatedOrder.delivery_fee_shown ? `💰 **Compenso:** €${updatedOrder.delivery_fee_shown.toFixed(2)}` : ''}\n\n` +
       `**Premi quando hai ritirato il pacco:**`,
       {

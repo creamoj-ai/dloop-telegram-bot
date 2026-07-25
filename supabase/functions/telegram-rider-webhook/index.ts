@@ -117,7 +117,7 @@ bot.callbackQuery(/^accept_order_(.+)$/, async (ctx) => {
       .update({
         assigned_rider_id: rider.id,
         status: "assigned",
-        updated_at: new Date().toISOString(),
+        assigned_at: new Date().toISOString(),
       })
       .eq("id", orderId)
       .eq("status", "pending") // ← RACE CONDITION GUARD
@@ -215,7 +215,7 @@ bot.callbackQuery(/^pickup_confirmed_(.+)$/, async (ctx) => {
       .from("orders")
       .update({
         status: "in_delivery",
-        updated_at: new Date().toISOString(),
+        picked_up_at: new Date().toISOString(),
       })
       .eq("id", orderId)
       .eq("status", "assigned");
@@ -261,7 +261,7 @@ bot.callbackQuery(/^delivery_confirmed_(.+)$/, async (ctx) => {
         status: "completed",
         delivery_paid_at: new Date().toISOString(),
         delivery_payment_confirmed: true,
-        updated_at: new Date().toISOString(),
+        delivered_at: new Date().toISOString(),
       })
       .eq("id", orderId)
       .eq("status", "in_delivery");
@@ -304,7 +304,11 @@ serve(async (req) => {
 
   try {
     const url = new URL(req.url);
-    if (url.searchParams.get("secret") !== Deno.env.get("TELEGRAM_RIDER_WEBHOOK_SECRET")) {
+    const secretHeader = req.headers.get("x-telegram-bot-api-secret-token");
+    const expectedSecret = Deno.env.get("TELEGRAM_RIDER_WEBHOOK_SECRET");
+
+    if (secretHeader !== expectedSecret) {
+      console.log("[rider-webhook] Secret mismatch - header:", secretHeader, "expected:", expectedSecret ? "set" : "MISSING");
       return new Response("Unauthorized", { status: 401 });
     }
 

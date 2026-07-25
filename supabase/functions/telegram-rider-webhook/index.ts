@@ -293,7 +293,9 @@ bot.callbackQuery(/^delivery_confirmed_(.+)$/, async (ctx) => {
 // WEBHOOK HANDLER
 // ============================================================================
 
-const handleUpdate = webhookCallback(bot, "std/http");
+const handleUpdate = webhookCallback(bot, "std/http", {
+  secretToken: Deno.env.get("TELEGRAM_RIDER_WEBHOOK_SECRET") || "",
+});
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -303,15 +305,6 @@ serve(async (req) => {
   }
 
   try {
-    const url = new URL(req.url);
-    const secretHeader = req.headers.get("x-telegram-bot-api-secret-token");
-    const expectedSecret = Deno.env.get("TELEGRAM_RIDER_WEBHOOK_SECRET");
-
-    if (secretHeader !== expectedSecret) {
-      console.log("[rider-webhook] Secret mismatch - header:", secretHeader, "expected:", expectedSecret ? "set" : "MISSING");
-      return new Response("Unauthorized", { status: 401 });
-    }
-
     return await handleUpdate(req);
   } catch (err) {
     console.error("[rider-bot] Error:", err);

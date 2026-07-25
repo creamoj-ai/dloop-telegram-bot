@@ -287,14 +287,14 @@ async function handlePost(token: string, req: Request, supabase: any): Promise<R
   try {
     console.log(`[customer-page] Notifica merchant per ordine ${order.id}...`);
 
-    // Recupera telegram_chat_id del merchant
+    // Recupera telegram_user_id del merchant
     const { data: dealer } = await supabase
       .from("dealers")
-      .select("telegram_chat_id")
+      .select("telegram_user_id")
       .eq("id", order.dealer_contact_id)
       .maybeSingle();
 
-    if (dealer?.telegram_chat_id) {
+    if (dealer?.telegram_user_id) {
       const orderShortId = order.id.slice(0, 8).toUpperCase();
       const packageInfo = [];
       if (order.package_size) packageInfo.push(order.package_size);
@@ -311,7 +311,7 @@ async function handlePost(token: string, req: Request, supabase: any): Promise<R
         `\n**L'ordine è pronto per il ritiro?**`;
 
       await bot.api.sendMessage(
-        dealer.telegram_chat_id,
+        dealer.telegram_user_id,
         message,
         {
           parse_mode: "Markdown",
@@ -325,7 +325,7 @@ async function handlePost(token: string, req: Request, supabase: any): Promise<R
 
       console.log(`[customer-page] Merchant notificato per ordine ${order.id}`);
     } else {
-      console.warn(`[customer-page] Merchant senza telegram_chat_id per ordine ${order.id}`);
+      console.warn(`[customer-page] Merchant senza telegram_user_id per ordine ${order.id}`);
     }
   } catch (notifyError) {
     console.error("[customer-page] Errore notifica merchant:", notifyError);

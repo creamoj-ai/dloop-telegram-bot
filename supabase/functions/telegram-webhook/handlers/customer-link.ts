@@ -37,7 +37,7 @@ async function handleOrdine(ctx: Context) {
   const { data: merchant, error } = await supabase
     .from(CONSTANTS.TABLE_MERCHANTS)
     .select("id, default_package_size, default_payment_mode, pickup_address")
-    .eq("telegram_chat_id", userId)
+    .eq("telegram_user_id", userId)
     .maybeSingle();
 
   if (error) {

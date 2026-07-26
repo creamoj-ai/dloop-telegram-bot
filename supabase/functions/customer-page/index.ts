@@ -213,7 +213,10 @@ async function handlePost(token: string, req: Request, supabase: any): Promise<R
 
   const recipientName = body.recipient_name?.toString().trim() || "";
   const recipientPhone = body.recipient_phone?.toString().trim() || "";
-  const deliveryAddress = body.delivery_address?.toString().trim() || "";
+  const dropoffAddress = body.dropoff_address?.toString().trim() || ""; // Indirizzo formattato Geoapify
+  const dropoffLat = body.dropoff_lat ? parseFloat(body.dropoff_lat.toString()) : null;
+  const dropoffLng = body.dropoff_lng ? parseFloat(body.dropoff_lng.toString()) : null;
+  const deliveryNotes = body.delivery_notes?.toString().trim() || "";
   const notes = body.notes?.toString().trim() || "";
 
   // Validazione (stessa logica di prima)
@@ -229,10 +232,15 @@ async function handlePost(token: string, req: Request, supabase: any): Promise<R
     errors.push("Telefono non valido (inserisci numero italiano valido)");
   }
 
-  if (!deliveryAddress) {
+  if (!dropoffAddress) {
     errors.push("Indirizzo di consegna obbligatorio");
-  } else if (!isValidAddress(deliveryAddress)) {
+  } else if (!isValidAddress(dropoffAddress)) {
     errors.push("Inserisci indirizzo completo: via, civico, città o CAP");
+  }
+
+  // Verifica coordinate Geoapify
+  if (dropoffLat === null || dropoffLng === null) {
+    errors.push("Coordinate consegna non valide. Seleziona un indirizzo dalla lista.");
   }
 
   if (errors.length > 0) {
@@ -251,18 +259,22 @@ async function handlePost(token: string, req: Request, supabase: any): Promise<R
   // Update ordine: compila dati cliente + trigger broadcast
   // Setta broadcast_tier=0 e broadcast_started_at per triggerare escalation-tick
   const updateData: Record<string, unknown> = {
-    dropoff_address: deliveryAddress, // Schema uses dropoff_address
-    customer_name: recipientName, // Schema uses customer_name
-    customer_phone: recipientPhone, // Schema uses customer_phone
+    dropoff_address: dropoffAddress, // Indirizzo formattato Geoapify (TEXT)
+    dropoff_lat: dropoffLat, // Coordinate Geoapify
+    dropoff_lng: dropoffLng,
+    delivery_notes: deliveryNotes, // Dettagli consegna separati
+    customer_name: recipientName,
+    customer_phone: recipientPhone,
     status: "pending", // Rimane pending, escalation-tick gestirà il broadcast
     delivery_pin: deliveryPin,
     broadcast_tier: 0, // Tier iniziale (top reputation)
     broadcast_started_at: new Date().toISOString(), // Trigger broadcast
+    // dropoff_point (geography) NON viene scritto - resta NULL
   };
 
-  // Add notes only if column exists (might not be in schema)
+  // Add notes se presenti
   if (notes) {
-    updateData.customer_address = deliveryAddress; // Use customer_address for full details if notes doesn't exist
+    updateData.notes = notes;
   }
 
   const { error: updateError } = await supabase
@@ -306,7 +318,8 @@ async function handlePost(token: string, req: Request, supabase: any): Promise<R
         `Ordine: #${orderShortId}\n` +
         `Cliente: ${recipientName}\n` +
         `Telefono: ${recipientPhone}\n` +
-        `Consegna: ${deliveryAddress}\n` +
+        `Consegna: ${dropoffAddress}\n` +
+        (deliveryNotes ? `Dettagli: ${deliveryNotes}\n` : '') +
         `${packageInfo.length > 0 ? `Pacco: ${packageInfo.join(', ')}\n` : ''}` +
         `\n**L'ordine è pronto per il ritiro?**`;
 

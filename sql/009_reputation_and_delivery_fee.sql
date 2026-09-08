@@ -134,6 +134,9 @@ COMMENT ON VIEW rider_reputation IS 'Vista aggregata reputazione rider: avg_rati
 -- 1g. FUNCTION: mediana zona (cold start default se < 5 listini)
 -- ────────────────────────────────────────────────────────────────────────────
 
+DROP FUNCTION IF EXISTS get_zone_median_fee(text) CASCADE;
+DROP FUNCTION IF EXISTS get_zone_median_fee(text, numeric, text, integer) CASCADE;
+
 CREATE OR REPLACE FUNCTION get_zone_median_fee(p_zona TEXT)
 RETURNS DECIMAL AS $$
 DECLARE

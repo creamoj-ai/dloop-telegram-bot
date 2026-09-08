@@ -16,6 +16,11 @@
 // ============================================================================
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { Bot } from "../telegram-webhook/deps.ts";
+import { createDeliveryOrder } from "../telegram-webhook/services/order-service.ts";
+import { assignRider } from "../telegram-webhook/services/dispatch-service.ts";
+import { notifyMerchant } from "../telegram-webhook/services/notification-service.ts";
+import { CONFIG } from "../telegram-webhook/shared/config.ts";
 
 // Struttura ordine atteso in ingresso
 interface InboundOrder {
@@ -65,16 +70,36 @@ serve(async (req: Request) => {
     }
 
     console.log("[wa-intake] Ordine ricevuto:", JSON.stringify(body));
-    // TODO: createDeliveryOrder(body) + assignRider + notifyMerchant
+
+    const bot = new Bot(CONFIG.telegram.token);
+
+    const orderId = await createDeliveryOrder({
+      merchant_id: body.merchant_id,
+      pickup_point: body.pickup_point,
+      delivery_address: body.delivery_address,
+      recipient_name: body.recipient_name,
+      recipient_phone: body.recipient_phone,
+      time_window: body.time_window,
+      notes: body.notes,
+      payment_mode: body.payment_mode ?? "delivery_on_completion",
+      source: "wa_intake",
+    });
+
+    await notifyMerchant(bot, "new_order", orderId);
+    await assignRider(bot, orderId);
+
+    console.log("[wa-intake] Ordine creato e merchant notificato:", orderId);
 
     return new Response(
-      JSON.stringify({ received: true }),
+      JSON.stringify({ received: true, order_id: orderId }),
       { status: 200, headers: { ...CORS, "Content-Type": "application/json" } }
     );
-  } catch {
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Errore sconosciuto";
+    console.error("[wa-intake] Errore:", message);
     return new Response(
-      JSON.stringify({ error: "Payload non valido" }),
-      { status: 400, headers: { ...CORS, "Content-Type": "application/json" } }
+      JSON.stringify({ error: message }),
+      { status: 500, headers: { ...CORS, "Content-Type": "application/json" } }
     );
   }
 });

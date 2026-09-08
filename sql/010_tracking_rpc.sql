@@ -26,7 +26,7 @@ BEGIN
       ELSE NULL
     END AS rider_first_name,
     o.created_at,
-    o.created_at AS updated_at  -- orders table non ha updated_at, uso created_at
+    o.updated_at
   FROM orders o
   LEFT JOIN riders r ON r.id = o.assigned_rider_id
   WHERE o.id = p_order_id;

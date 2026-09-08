@@ -100,7 +100,7 @@ export interface Rider {
     updated_at: string;
   };
   status: RiderStatus;
-  vat_id: string; // Partita IVA
+  vat_id?: string | null; // Partita IVA — colonna non ancora presente in DB
   created_at: string;
   earnings_week: number; // EUR
   orders_completed_week: number;

@@ -200,14 +200,20 @@ async function notifyRiders(bot: Bot, orderId: string, order: Order, riders: Rid
     if (order.package_count && order.package_count > 1) packageInfo.push(`${order.package_count} colli`);
     if (order.is_fragile) packageInfo.push(`⚠️ Fragile`);
 
+    const o = order as any;
+    const pickupPoint    = o.pickup_point    || o.pickup_address    || "N/D";
+    const deliveryAddr   = o.delivery_address || o.customer_address  || "N/D";
+    const recipientName  = o.recipient_name  || o.customer_name     || "N/D";
+    const recipientPhone = o.recipient_phone || o.customer_phone    || "N/D";
+
     const message = `
 🚚 **NUOVO ORDINE**
 
 Ordine: #${orderId.slice(0, 8).toUpperCase()}
-📍 Ritiro: ${order.pickup_point}
-📍 Consegna: ${order.delivery_address}
-👤 Destinatario: ${order.recipient_name}
-📱 Telefono: ${order.recipient_phone}
+📍 Ritiro: ${pickupPoint}
+📍 Consegna: ${deliveryAddr}
+👤 Destinatario: ${recipientName}
+📱 Telefono: ${recipientPhone}
 ${packageInfo.length > 0 ? `📦 Pacco: ${packageInfo.join(' • ')}` : ""}
 ${order.time_window ? `⏰ Finestra: ${order.time_window}` : ""}
 ${order.notes ? `📝 Note: ${order.notes}` : ""}

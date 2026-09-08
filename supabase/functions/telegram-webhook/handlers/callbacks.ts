@@ -260,7 +260,7 @@ async function handleAcceptOrder(ctx: Context) {
       })
       .eq("id", orderId)
       .eq("status", OrderStatus.PENDING)
-      .select("id, pickup_point")
+      .select("id, pickup_point, pickup_address, delivery_address, customer_address, recipient_name, customer_name, recipient_phone, customer_phone")
       .maybeSingle();
 
     if (error) throw error;
@@ -270,11 +270,17 @@ async function handleAcceptOrder(ctx: Context) {
       return;
     }
 
+    const o = updatedOrder as any;
+    const pickupPoint    = o.pickup_point    || o.pickup_address    || "N/D";
+    const deliveryAddr   = o.delivery_address || o.customer_address  || "N/D";
+    const recipientName  = o.recipient_name  || o.customer_name     || "N/D";
+    const recipientPhone = o.recipient_phone || o.customer_phone    || "N/D";
+
     await notifyMerchant(ctx.api as unknown as Bot, "rider_assigned", orderId, rider.name);
     await ctx.answerCallbackQuery({ text: "✅ Ordine assegnato" });
     await ctx.editMessageReplyMarkup({ reply_markup: { inline_keyboard: [] } });
     await ctx.reply(
-      `✅ Ordine #${orderId.slice(0, 8).toUpperCase()} assegnato a te.\n📍 Ritira: ${updatedOrder.pickup_point}\n\nPremi quando ritiri il pacco:`,
+      `✅ Ordine #${orderId.slice(0, 8).toUpperCase()} assegnato a te.\n📍 Ritira: ${pickupPoint}\n📍 Consegna: ${deliveryAddr}\n👤 ${recipientName} · ${recipientPhone}\n\nPremi quando hai ritirato il pacco:`,
       {
         reply_markup: {
           inline_keyboard: [[

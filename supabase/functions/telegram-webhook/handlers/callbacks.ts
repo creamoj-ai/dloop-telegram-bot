@@ -260,7 +260,7 @@ async function handleAcceptOrder(ctx: Context) {
       })
       .eq("id", orderId)
       .eq("status", OrderStatus.PENDING)
-      .select("id, pickup_point, pickup_address, delivery_address, customer_address, recipient_name, customer_name, recipient_phone, customer_phone")
+      .select("id, pickup_point, pickup_address, delivery_address, dropoff_address, customer_address, recipient_name, customer_name, recipient_phone, customer_phone")
       .maybeSingle();
 
     if (error) throw error;
@@ -272,7 +272,7 @@ async function handleAcceptOrder(ctx: Context) {
 
     const o = updatedOrder as any;
     const pickupPoint    = o.pickup_point    || o.pickup_address    || "N/D";
-    const deliveryAddr   = o.delivery_address || o.customer_address  || "N/D";
+    const deliveryAddr   = o.delivery_address || o.dropoff_address || o.customer_address  || "N/D";
     const recipientName  = o.recipient_name  || o.customer_name     || "N/D";
     const recipientPhone = o.recipient_phone || o.customer_phone    || "N/D";
 
@@ -346,32 +346,34 @@ async function handleDeclineOrder(ctx: Context) {
 
 async function handleConfirmDeliveryPayment(ctx: Context) {
   const orderId = (ctx.match as RegExpMatchArray)[1];
+  const riderId = ctx.from?.id;
+  const chatId = ctx.chat?.id;
+
+  if (!riderId || !chatId) {
+    await ctx.answerCallbackQuery({ text: "Errore: rider non identificato", show_alert: true });
+    return;
+  }
 
   try {
-    const supabase = getSupabaseClient();
+    // Salva orderId in sessione e chiedi PIN al rider
+    await upsertSession(
+      chatId,
+      riderId,
+      CommandStep.WAITING_DELIVERY_PIN,
+      {} as any,
+      { order_id: orderId }
+    );
 
-    // Chiude l'ordine: status COMPLETED + conferma incasso rider
-    const { error } = await supabase
-      .from(CONSTANTS.TABLE_ORDERS)
-      .update({
-        status: OrderStatus.COMPLETED,
-        delivery_payment_confirmed: true,
-        delivery_paid_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", orderId);
-
-    if (error) throw error;
-
-    await notifyMerchant(ctx.api as unknown as Bot, "completed", orderId);
-    await ctx.answerCallbackQuery({ text: "✅ Consegna completata" });
+    await ctx.answerCallbackQuery();
     await ctx.editMessageReplyMarkup({ reply_markup: { inline_keyboard: [] } });
-    await ctx.reply(`✅ Ordine #${orderId.slice(0, 8).toUpperCase()} consegnato e chiuso. Ottimo lavoro! 🎉`);
+    await ctx.reply(
+      `🔐 Inserisci il PIN a 4 cifre mostrato dal cliente per confermare la consegna:`
+    );
 
-    console.log(`[callbacks] Ordine ${orderId} completato`);
+    console.log(`[callbacks] Rider ${riderId} richiesto PIN per ordine ${orderId}`);
   } catch (err) {
     console.error("[callbacks] handleConfirmDeliveryPayment error:", err);
-    await ctx.answerCallbackQuery({ text: "Errore conferma incasso", show_alert: true });
+    await ctx.answerCallbackQuery({ text: "Errore conferma consegna", show_alert: true });
   }
 }
 

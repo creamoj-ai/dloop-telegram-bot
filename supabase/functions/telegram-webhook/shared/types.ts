@@ -145,6 +145,8 @@ export enum CommandStep {
   NOTE = "note", // Opzionale — /skip
   PAYMENT_MODE = "payment_mode", // Bottoni inline
   CONFIRM = "confirm",
+  // Rider flow
+  WAITING_DELIVERY_PIN = "waiting_delivery_pin",
 }
 
 // ─────────────────────────────────────────────────────────────────────────

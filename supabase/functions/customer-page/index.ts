@@ -28,6 +28,7 @@ interface OrderData {
   id: string;
   dealer_contact_id: string; // FK to dealers (schema uses dealer_contact_id)
   pickup_address: string; // Text address (schema uses pickup_address)
+  restaurant_name: string; // Merchant name
   payment_mode: string;
   package_size: string;
   package_count: number;
@@ -139,6 +140,18 @@ async function handleGet(token: string, supabase: any): Promise<Response> {
     );
   }
 
+  // Stima tariffa consegna (distanza minima 2km = solo base_fee)
+  let deliveryFeeEstimate: number | null = null;
+  try {
+    const { data: feeData } = await supabase.rpc("get_zone_median_fee", {
+      p_zone: "portici",
+      p_distance_km: 2,
+      p_package_size: order.package_size,
+      p_package_count: order.package_count,
+    });
+    if (feeData !== null && feeData !== undefined) deliveryFeeEstimate = Number(feeData);
+  } catch (_) { /* ignora errori RPC, cliente vedrà stima assente */ }
+
   // Ritorna dati ordine (solo campi necessari per il form, no dati sensibili)
   return new Response(
     JSON.stringify({
@@ -148,7 +161,9 @@ async function handleGet(token: string, supabase: any): Promise<Response> {
         package_count: order.package_count,
         is_fragile: order.is_fragile,
         pickup_address: order.pickup_address,
+        restaurant_name: order.restaurant_name,
         payment_mode: order.payment_mode,
+        delivery_fee_estimate: deliveryFeeEstimate,
       },
     }),
     {
@@ -256,6 +271,32 @@ async function handlePost(token: string, req: Request, supabase: any): Promise<R
   // Genera PIN 4 cifre
   const deliveryPin = generatePin();
 
+  // Calcola tariffa consegna tramite RPCs (distanza + mediana zona)
+  let deliveryFeeShown: number | null = null;
+  try {
+    const { data: dealer } = await supabase
+      .from("dealers")
+      .select("pickup_lat, pickup_lng")
+      .eq("id", order.dealer_contact_id)
+      .maybeSingle();
+
+    if (dealer?.pickup_lat && dealer?.pickup_lng && dropoffLat && dropoffLng) {
+      const { data: distKm } = await supabase.rpc("calculate_distance_km", {
+        p_lat1: dealer.pickup_lat, p_lng1: dealer.pickup_lng,
+        p_lat2: dropoffLat, p_lng2: dropoffLng,
+      });
+      const { data: feeData } = await supabase.rpc("get_zone_median_fee", {
+        p_zone: "portici",
+        p_distance_km: distKm ?? 2,
+        p_package_size: order.package_size,
+        p_package_count: order.package_count,
+      });
+      if (feeData !== null && feeData !== undefined) deliveryFeeShown = Number(feeData);
+    }
+  } catch (feeErr) {
+    console.warn("[customer-page] Fee calculation failed:", feeErr);
+  }
+
   // Update ordine: compila dati cliente + trigger broadcast
   // Setta broadcast_tier=0 e broadcast_started_at per triggerare escalation-tick
   const updateData: Record<string, unknown> = {
@@ -269,6 +310,7 @@ async function handlePost(token: string, req: Request, supabase: any): Promise<R
     delivery_pin: deliveryPin,
     broadcast_tier: 0, // Tier iniziale (top reputation)
     broadcast_started_at: new Date().toISOString(), // Trigger broadcast
+    ...(deliveryFeeShown !== null ? { delivery_fee_shown: deliveryFeeShown } : {}),
     // dropoff_point (geography) NON viene scritto - resta NULL
   };
 
@@ -348,9 +390,13 @@ async function handlePost(token: string, req: Request, supabase: any): Promise<R
   // Invia PIN al cliente via WhatsApp (stub per ora)
   await sendPinToCustomer(recipientPhone, deliveryPin, order.id);
 
-  // Ritorna success con PIN (WhatsApp è stub, frontend lo mostrerà)
+  // Ritorna success con PIN + fee (WhatsApp è stub, frontend lo mostrerà)
   return new Response(
-    JSON.stringify({ success: true, pin: deliveryPin }),
+    JSON.stringify({
+      success: true,
+      pin: deliveryPin,
+      delivery_fee: deliveryFeeShown,
+    }),
     {
       status: 200,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -365,7 +411,7 @@ async function handlePost(token: string, req: Request, supabase: any): Promise<R
 async function getOrderByToken(token: string, supabase: any): Promise<OrderData | null> {
   const { data, error } = await supabase
     .from("orders")
-    .select("customer_token, token_expires_at, status, package_size, package_count, is_fragile, pickup_address, payment_mode, delivery_pin, id, dealer_contact_id, customer_name")
+    .select("customer_token, token_expires_at, status, package_size, package_count, is_fragile, pickup_address, restaurant_name, payment_mode, delivery_pin, id, dealer_contact_id, customer_name")
     .eq("customer_token", token)
     .maybeSingle();
 

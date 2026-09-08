@@ -8,8 +8,10 @@
 import { Bot, Context } from "../deps.ts";
 import { getSession, upsertSession, deleteSession } from "../services/session-store.ts";
 import { getZoneMedianFee } from "../services/reputation-service.ts";
-import { CommandStep } from "../shared/types.ts";
+import { CommandStep, OrderStatus } from "../shared/types.ts";
 import { CONSTANTS } from "../shared/config.ts";
+import { getSupabaseClient } from "../shared/supabase.ts";
+import { notifyMerchant } from "../services/notification-service.ts";
 
 /**
  * Registra handler per testo libero (session input).
@@ -122,6 +124,58 @@ async function processSessionStep(
         },
       });
       break;
+
+    case CommandStep.WAITING_DELIVERY_PIN: {
+      const orderId = session.temp_data?.order_id as string | undefined;
+      if (!orderId) {
+        await ctx.reply("Errore: ordine non trovato. Contatta admin.");
+        await deleteSession(chatId);
+        break;
+      }
+
+      const pin = input.trim();
+      if (!/^\d{4}$/.test(pin)) {
+        await ctx.reply("⚠️ PIN non valido. Inserisci il PIN a 4 cifre:");
+        break; // Keep session alive
+      }
+
+      const supabase = getSupabaseClient();
+      const { data: order } = await supabase
+        .from("orders")
+        .select("id, delivery_pin, status")
+        .eq("id", orderId)
+        .maybeSingle();
+
+      if (!order) {
+        await ctx.reply("Errore: ordine non trovato nel sistema.");
+        await deleteSession(chatId);
+        break;
+      }
+
+      if (order.delivery_pin !== pin) {
+        await ctx.reply("❌ PIN errato. Chiedi al cliente di mostrare il PIN corretto e riprova:");
+        break; // Keep session alive for retry
+      }
+
+      // PIN corretto: chiude ordine
+      await supabase
+        .from("orders")
+        .update({
+          status: OrderStatus.COMPLETED,
+          delivery_payment_confirmed: true,
+          delivery_paid_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", orderId);
+
+      await notifyMerchant(ctx.api as unknown as Bot, "completed", orderId);
+      await deleteSession(chatId);
+      await ctx.reply(
+        `✅ PIN corretto! Ordine #${orderId.slice(0, 8).toUpperCase()} consegnato e chiuso. Ottimo lavoro! 🎉`
+      );
+      console.log(`[session] Ordine ${orderId} completato con PIN validato`);
+      break;
+    }
 
     default:
       await ctx.reply("❌ Stato sessione non riconosciuto. Usa /nuovo_ordine per ricominciare.");

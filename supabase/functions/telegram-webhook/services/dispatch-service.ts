@@ -202,7 +202,7 @@ async function notifyRiders(bot: Bot, orderId: string, order: Order, riders: Rid
 
     const o = order as any;
     const pickupPoint    = o.pickup_point    || o.pickup_address    || "N/D";
-    const deliveryAddr   = o.delivery_address || o.customer_address  || "N/D";
+    const deliveryAddr   = o.delivery_address || o.dropoff_address || o.customer_address  || "N/D";
     const recipientName  = o.recipient_name  || o.customer_name     || "N/D";
     const recipientPhone = o.recipient_phone || o.customer_phone    || "N/D";
 

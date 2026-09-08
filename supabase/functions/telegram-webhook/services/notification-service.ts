@@ -37,27 +37,33 @@ export async function notifyMerchant(
 
   const supabase = getSupabaseClient();
 
-  // Join singolo: ordine + telegram_user_id del merchant
-  const { data, error } = await supabase
+  // Two-query approach to avoid FK ambiguity (orders use dealer_contact_id, not dealer_id)
+  const { data: orderData, error: orderError } = await supabase
     .from(CONSTANTS.TABLE_ORDERS)
-    .select("delivery_address, dealers!inner(telegram_user_id)")
+    .select("dropoff_address, dealer_contact_id")
     .eq("id", orderId)
     .single();
 
-  if (error || !data) {
+  if (orderError || !orderData) {
     console.warn(`[notification] Ordine ${orderId} non trovato per notifica merchant`);
     return;
   }
 
-  const dealers = data.dealers as { telegram_user_id: string | null } | null;
-  const telegramId = dealers?.telegram_user_id;
+  const { data: dealerData } = await supabase
+    .from(CONSTANTS.TABLE_MERCHANTS)
+    .select("telegram_user_id")
+    .eq("id", orderData.dealer_contact_id)
+    .maybeSingle();
+
+  const telegramId = dealerData?.telegram_user_id;
 
   if (!telegramId) {
     console.warn(`[notification] Merchant senza telegram_user_id per ordine ${orderId}`);
     return;
   }
 
-  const text = formatMerchantMessage(event, orderId, data.delivery_address, riderName);
+  const deliveryAddress = (orderData as any).dropoff_address || "N/D";
+  const text = formatMerchantMessage(event, orderId, deliveryAddress, riderName);
 
   try {
     await bot.api.sendMessage(telegramId, text);

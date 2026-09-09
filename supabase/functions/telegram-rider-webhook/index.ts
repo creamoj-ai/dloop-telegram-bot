@@ -122,7 +122,7 @@ bot.callbackQuery(/^accept_order_(.+)$/, async (ctx) => {
       })
       .eq("id", orderId)
       .eq("status", "pending") // ← RACE CONDITION GUARD
-      .select("id, pickup_address, customer_address, customer_name, customer_phone, delivery_fee_shown")
+      .select("id, pickup_address, delivery_address, dropoff_address, customer_address, customer_name, customer_phone, delivery_fee_shown")
       .maybeSingle();
 
     if (updateError) {
@@ -150,7 +150,7 @@ bot.callbackQuery(/^accept_order_(.+)$/, async (ctx) => {
     await ctx.reply(
       `✅ **Ordine #${orderShortId} assegnato a te!**\n\n` +
       `📍 **Ritiro:** ${updatedOrder.pickup_address}\n` +
-      `📍 **Consegna:** ${updatedOrder.customer_address}\n` +
+      `📍 **Consegna:** ${updatedOrder.delivery_address || updatedOrder.dropoff_address || updatedOrder.customer_address || "N/D"}\n` +
       `👤 **Destinatario:** ${updatedOrder.customer_name}\n` +
       `📱 **Telefono:** ${updatedOrder.customer_phone}\n` +
       `${updatedOrder.delivery_fee_shown ? `💰 **Compenso:** €${updatedOrder.delivery_fee_shown.toFixed(2)}` : ''}\n\n` +

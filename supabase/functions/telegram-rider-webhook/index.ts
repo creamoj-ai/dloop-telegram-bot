@@ -231,7 +231,7 @@ bot.callbackQuery(/^pickup_confirmed_(.+)$/, async (ctx) => {
   const orderId = (ctx.match as RegExpMatchArray)[1];
 
   try {
-    const { data: rows, error, count } = await supabase
+    const { data: rows, error } = await supabase
       .from("orders")
       .update({
         status: "in_delivery",
@@ -239,14 +239,14 @@ bot.callbackQuery(/^pickup_confirmed_(.+)$/, async (ctx) => {
       })
       .eq("id", orderId)
       .eq("status", "assigned")
-      .select("dealer_contact_id", { count: "exact" });
+      .select("dealer_contact_id");
 
-    if (error || !count || count === 0) {
-      console.error("[rider-bot] pickup_confirmed: 0 righe aggiornate", { error, count });
+    if (error || !rows || rows.length === 0) {
+      console.error("[rider-bot] pickup_confirmed: 0 righe aggiornate", { error, rowCount: rows?.length });
       await ctx.answerCallbackQuery({ text: "Ordine non trovabile, riprova", show_alert: true });
       return;
     }
-    const pickupOrder = rows?.[0];
+    const pickupOrder = rows[0];
 
     await ctx.answerCallbackQuery({ text: "📦 Ritiro confermato" });
     await ctx.editMessageReplyMarkup({ reply_markup: { inline_keyboard: [] } });
@@ -297,15 +297,15 @@ bot.callbackQuery(/^delivery_confirmed_(.+)$/, async (ctx) => {
   const orderId = (ctx.match as RegExpMatchArray)[1];
 
   try {
-    const { error, count } = await supabase
+    const { data: rows, error } = await supabase
       .from("orders")
       .update({ status: "waiting_pin" })
       .eq("id", orderId)
       .eq("status", "in_delivery")
-      .select("id", { count: "exact" });
+      .select("id");
 
-    if (error || !count || count === 0) {
-      console.error("[rider-bot] delivery_confirmed: 0 righe aggiornate", { error, count });
+    if (error || !rows || rows.length === 0) {
+      console.error("[rider-bot] delivery_confirmed: 0 righe aggiornate", { error, rowCount: rows?.length });
       await ctx.answerCallbackQuery({ text: "Ordine non trovabile, riprova", show_alert: true });
       return;
     }

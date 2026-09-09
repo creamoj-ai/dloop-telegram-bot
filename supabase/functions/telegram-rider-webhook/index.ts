@@ -336,13 +336,15 @@ bot.on("message:text", async (ctx) => {
 
     if (!rider) return;
 
-    const { data: order } = await supabase
+    const { data: rows } = await supabase
       .from("orders")
       .select("id, delivery_pin, dealer_contact_id")
       .eq("assigned_rider_id", rider.id)
       .eq("status", "waiting_pin")
-      .maybeSingle();
+      .order("created_at", { ascending: false })
+      .limit(1);
 
+    const order = rows?.[0];
     if (!order) return;
 
     if (text !== order.delivery_pin) {

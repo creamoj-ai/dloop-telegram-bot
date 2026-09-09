@@ -13,6 +13,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.0";
 const TELEGRAM_RIDER_BOT_TOKEN = Deno.env.get("TELEGRAM_RIDER_BOT_TOKEN") || "";
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") || "";
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
+const TELEGRAM_MERCHANT_BOT_TOKEN = Deno.env.get("TELEGRAM_BOT_TOKEN") || "";
 
 if (!TELEGRAM_RIDER_BOT_TOKEN) {
   throw new Error("TELEGRAM_RIDER_BOT_TOKEN non configurato");
@@ -250,19 +251,14 @@ bot.callbackQuery(/^pickup_confirmed_(.+)$/, async (ctx) => {
   }
 });
 
-// Callback: delivery_confirmed_{orderId}
+// Callback: delivery_confirmed_{orderId} — chiede PIN prima di chiudere
 bot.callbackQuery(/^delivery_confirmed_(.+)$/, async (ctx) => {
   const orderId = (ctx.match as RegExpMatchArray)[1];
 
   try {
     const { error } = await supabase
       .from("orders")
-      .update({
-        status: "completed",
-        delivery_paid_at: new Date().toISOString(),
-        delivery_payment_confirmed: true,
-        delivered_at: new Date().toISOString(),
-      })
+      .update({ status: "waiting_pin" })
       .eq("id", orderId)
       .eq("status", "in_delivery");
 
@@ -272,20 +268,80 @@ bot.callbackQuery(/^delivery_confirmed_(.+)$/, async (ctx) => {
       return;
     }
 
-    await ctx.answerCallbackQuery({ text: "✅ Consegna completata" });
+    await ctx.answerCallbackQuery();
     await ctx.editMessageReplyMarkup({ reply_markup: { inline_keyboard: [] } });
-
-    const orderShortId = orderId.slice(0, 8).toUpperCase();
-    await ctx.reply(
-      `✅ **Consegna completata!**\n\n` +
-      `Ordine #${orderShortId} consegnato e chiuso.\n\n` +
-      `Ottimo lavoro! 🎉`
-    );
-
-    console.log(`[rider-bot] Ordine ${orderId} completato`);
+    await ctx.reply(`🔐 Inserisci il PIN a 4 cifre mostrato dal cliente:`);
+    console.log(`[rider-bot] Ordine ${orderId} in attesa PIN`);
   } catch (err) {
     console.error("[rider-bot] Errore delivery_confirmed:", err);
     await ctx.answerCallbackQuery({ text: "Errore conferma consegna", show_alert: true });
+  }
+});
+
+// Testo libero — validazione PIN consegna
+bot.on("message:text", async (ctx) => {
+  const riderTelegramId = ctx.from?.id;
+  const text = ctx.message.text.trim();
+
+  if (!riderTelegramId || !/^\d{4}$/.test(text)) return;
+
+  try {
+    const { data: rider } = await supabase
+      .from("riders")
+      .select("id")
+      .eq("telegram_user_id", riderTelegramId)
+      .maybeSingle();
+
+    if (!rider) return;
+
+    const { data: order } = await supabase
+      .from("orders")
+      .select("id, delivery_pin, dealer_contact_id")
+      .eq("assigned_rider_id", rider.id)
+      .eq("status", "waiting_pin")
+      .maybeSingle();
+
+    if (!order) return;
+
+    if (text !== order.delivery_pin) {
+      await ctx.reply("❌ PIN errato, riprova:");
+      return;
+    }
+
+    await supabase
+      .from("orders")
+      .update({
+        status: "completed",
+        delivery_payment_confirmed: true,
+        delivery_paid_at: new Date().toISOString(),
+        delivered_at: new Date().toISOString(),
+      })
+      .eq("id", order.id);
+
+    const orderShortId = order.id.slice(0, 8).toUpperCase();
+    await ctx.reply(`✅ **Consegna completata!**\n\nOrdine #${orderShortId} chiuso. Ottimo lavoro! 🎉`);
+
+    // Notifica merchant via bot merchant
+    const { data: dealer } = await supabase
+      .from("dealers")
+      .select("telegram_user_id")
+      .eq("id", order.dealer_contact_id)
+      .maybeSingle();
+
+    if (dealer?.telegram_user_id && TELEGRAM_MERCHANT_BOT_TOKEN) {
+      await fetch(`https://api.telegram.org/bot${TELEGRAM_MERCHANT_BOT_TOKEN}/sendMessage`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          chat_id: dealer.telegram_user_id,
+          text: `✅ Ordine #${orderShortId} consegnato e confermato con PIN.`,
+        }),
+      });
+    }
+
+    console.log(`[rider-bot] Ordine ${order.id} completato con PIN`);
+  } catch (err) {
+    console.error("[rider-bot] Errore PIN validation:", err);
   }
 });
 

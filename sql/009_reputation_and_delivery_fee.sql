@@ -164,6 +164,8 @@ COMMENT ON FUNCTION get_zone_median_fee IS 'Mediana prezzi consegna zona. NULL s
 -- 1h. FUNCTION: get_riders_by_tier (PostGIS nearest + reputation filter)
 -- ────────────────────────────────────────────────────────────────────────────
 
+DROP FUNCTION IF EXISTS get_riders_by_tier(DOUBLE PRECISION, DOUBLE PRECISION, INT, INT, INT);
+
 CREATE OR REPLACE FUNCTION get_riders_by_tier(
   p_lat DOUBLE PRECISION,
   p_lon DOUBLE PRECISION,
@@ -181,7 +183,6 @@ RETURNS TABLE(
   created_at TIMESTAMPTZ,
   earnings_week DECIMAL,
   orders_completed_week INT,
-  rating DECIMAL,
   location geography,
   acceptance_rate DECIMAL,
   completion_rate DECIMAL,
@@ -202,7 +203,6 @@ BEGIN
     r.created_at,
     r.earnings_week,
     r.orders_completed_week,
-    r.rating,
     r.location,
     r.acceptance_rate,
     r.completion_rate,

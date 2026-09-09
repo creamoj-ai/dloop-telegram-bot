@@ -210,6 +210,7 @@ async function notifyRiders(bot: Bot, orderId: string, order: Order, riders: Rid
 🚚 **NUOVO ORDINE**
 
 Ordine: #${orderId.slice(0, 8).toUpperCase()}
+${o.restaurant_name ? `🏪 Esercente: ${o.restaurant_name}` : ""}
 📍 Ritiro: ${pickupPoint}
 📍 Consegna: ${deliveryAddr}
 👤 Destinatario: ${recipientName}

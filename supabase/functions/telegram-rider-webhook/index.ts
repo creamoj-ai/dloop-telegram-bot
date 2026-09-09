@@ -231,7 +231,7 @@ bot.callbackQuery(/^pickup_confirmed_(.+)$/, async (ctx) => {
   const orderId = (ctx.match as RegExpMatchArray)[1];
 
   try {
-    const { data: pickupOrder, error } = await supabase
+    const { data: rows, error, count } = await supabase
       .from("orders")
       .update({
         status: "in_delivery",
@@ -239,14 +239,14 @@ bot.callbackQuery(/^pickup_confirmed_(.+)$/, async (ctx) => {
       })
       .eq("id", orderId)
       .eq("status", "assigned")
-      .select("dealer_contact_id")
-      .maybeSingle();
+      .select("dealer_contact_id", { count: "exact" });
 
-    if (error) {
-      console.error("[rider-bot] Errore pickup_confirmed:", error);
-      await ctx.answerCallbackQuery({ text: "Errore conferma ritiro", show_alert: true });
+    if (error || !count || count === 0) {
+      console.error("[rider-bot] pickup_confirmed: 0 righe aggiornate", { error, count });
+      await ctx.answerCallbackQuery({ text: "Ordine non trovabile, riprova", show_alert: true });
       return;
     }
+    const pickupOrder = rows?.[0];
 
     await ctx.answerCallbackQuery({ text: "📦 Ritiro confermato" });
     await ctx.editMessageReplyMarkup({ reply_markup: { inline_keyboard: [] } });
@@ -297,15 +297,16 @@ bot.callbackQuery(/^delivery_confirmed_(.+)$/, async (ctx) => {
   const orderId = (ctx.match as RegExpMatchArray)[1];
 
   try {
-    const { error } = await supabase
+    const { error, count } = await supabase
       .from("orders")
       .update({ status: "waiting_pin" })
       .eq("id", orderId)
-      .eq("status", "in_delivery");
+      .eq("status", "in_delivery")
+      .select("id", { count: "exact" });
 
-    if (error) {
-      console.error("[rider-bot] Errore delivery_confirmed:", error);
-      await ctx.answerCallbackQuery({ text: "Errore conferma consegna", show_alert: true });
+    if (error || !count || count === 0) {
+      console.error("[rider-bot] delivery_confirmed: 0 righe aggiornate", { error, count });
+      await ctx.answerCallbackQuery({ text: "Ordine non trovabile, riprova", show_alert: true });
       return;
     }
 

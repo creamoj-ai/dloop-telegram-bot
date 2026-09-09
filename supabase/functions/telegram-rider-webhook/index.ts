@@ -122,7 +122,7 @@ bot.callbackQuery(/^accept_order_(.+)$/, async (ctx) => {
       })
       .eq("id", orderId)
       .eq("status", "pending") // ← RACE CONDITION GUARD
-      .select("id, pickup_address, dropoff_address, customer_address, customer_name, customer_phone, delivery_fee_shown, restaurant_name")
+      .select("id, pickup_address, dropoff_address, customer_address, customer_name, customer_phone, delivery_fee_shown, restaurant_name, dealer_contact_id")
       .maybeSingle();
 
     if (updateError) {
@@ -166,6 +166,24 @@ bot.callbackQuery(/^accept_order_(.+)$/, async (ctx) => {
     );
 
     console.log(`[rider-bot] Rider ${rider.id} (${rider.name}) accepted order ${orderId}`);
+
+    // Notifica merchant: rider ha accettato
+    const { data: dealer } = await supabase
+      .from("dealers")
+      .select("telegram_user_id")
+      .eq("id", updatedOrder.dealer_contact_id)
+      .maybeSingle();
+
+    if (dealer?.telegram_user_id && TELEGRAM_MERCHANT_BOT_TOKEN) {
+      await fetch(`https://api.telegram.org/bot${TELEGRAM_MERCHANT_BOT_TOKEN}/sendMessage`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          chat_id: dealer.telegram_user_id,
+          text: `🛵 Ordine #${orderShortId} — rider ${rider.name} ha accettato e sta arrivando al ritiro.`,
+        }),
+      });
+    }
   } catch (err) {
     console.error("[rider-bot] Errore handleAcceptOrder:", err);
     await ctx.answerCallbackQuery({ text: "Errore accettazione ordine", show_alert: true });
@@ -213,14 +231,16 @@ bot.callbackQuery(/^pickup_confirmed_(.+)$/, async (ctx) => {
   const orderId = (ctx.match as RegExpMatchArray)[1];
 
   try {
-    const { error } = await supabase
+    const { data: pickupOrder, error } = await supabase
       .from("orders")
       .update({
         status: "in_delivery",
         picked_up_at: new Date().toISOString(),
       })
       .eq("id", orderId)
-      .eq("status", "assigned");
+      .eq("status", "assigned")
+      .select("dealer_contact_id")
+      .maybeSingle();
 
     if (error) {
       console.error("[rider-bot] Errore pickup_confirmed:", error);
@@ -246,6 +266,26 @@ bot.callbackQuery(/^pickup_confirmed_(.+)$/, async (ctx) => {
     );
 
     console.log(`[rider-bot] Ordine ${orderId} in consegna`);
+
+    // Notifica merchant: rider ha ritirato il pacco
+    if (pickupOrder?.dealer_contact_id) {
+      const { data: dealer } = await supabase
+        .from("dealers")
+        .select("telegram_user_id")
+        .eq("id", pickupOrder.dealer_contact_id)
+        .maybeSingle();
+
+      if (dealer?.telegram_user_id && TELEGRAM_MERCHANT_BOT_TOKEN) {
+        await fetch(`https://api.telegram.org/bot${TELEGRAM_MERCHANT_BOT_TOKEN}/sendMessage`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            chat_id: dealer.telegram_user_id,
+            text: `📦 Ordine #${orderShortId} — rider in arrivo, consegna imminente.`,
+          }),
+        });
+      }
+    }
   } catch (err) {
     console.error("[rider-bot] Errore pickup_confirmed:", err);
     await ctx.answerCallbackQuery({ text: "Errore conferma ritiro", show_alert: true });

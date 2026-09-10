@@ -159,7 +159,9 @@ async function handleGet(token: string, supabase: any): Promise<Response> {
     deliveryFeeEstimate = parseFloat((BASE_FEE + (ZONA_AVG_KM * RATE_PER_KM)).toFixed(2));
   }
 
-  const deliveryFeeBreakdown = `€${BASE_FEE.toFixed(2)} fisso + €${(ZONA_AVG_KM * RATE_PER_KM).toFixed(2)} (${ZONA_AVG_KM} km media × €${RATE_PER_KM}) = €${deliveryFeeEstimate.toFixed(2)} stimato`;
+  const feeKmPart = parseFloat((deliveryFeeEstimate - BASE_FEE).toFixed(2));
+  const realKm = parseFloat((feeKmPart / RATE_PER_KM).toFixed(1));
+  const deliveryFeeBreakdown = `€${BASE_FEE.toFixed(2)} fisso + €${feeKmPart.toFixed(2)} (${realKm} km × €${RATE_PER_KM}) = €${deliveryFeeEstimate.toFixed(2)} stimato`;
 
   // Ritorna dati ordine (solo campi necessari per il form, no dati sensibili)
   return new Response(
@@ -424,7 +426,9 @@ async function handlePost(token: string, req: Request, supabase: any): Promise<R
   await sendPinToCustomer(recipientPhone, deliveryPin, order.id);
 
   // Ritorna success con PIN + fee + breakdown (WhatsApp è stub, frontend lo mostrerà)
-  const deliveryFeeBreakdown = `€${BASE_FEE.toFixed(2)} fisso + €${(deliveryFeeShown! - BASE_FEE).toFixed(2)} (${distKm.toFixed(1)} km × €${RATE_PER_KM}) = €${deliveryFeeShown!.toFixed(2)}`;
+  const feeKmPartPost = parseFloat((deliveryFeeShown! - BASE_FEE).toFixed(2));
+  const realKmPost = parseFloat((feeKmPartPost / RATE_PER_KM).toFixed(1));
+  const deliveryFeeBreakdown = `€${BASE_FEE.toFixed(2)} fisso + €${feeKmPartPost.toFixed(2)} (${realKmPost} km × €${RATE_PER_KM}) = €${deliveryFeeShown!.toFixed(2)}`;
 
   return new Response(
     JSON.stringify({

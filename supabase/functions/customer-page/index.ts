@@ -140,7 +140,11 @@ async function handleGet(token: string, supabase: any): Promise<Response> {
     );
   }
 
-  // Stima tariffa consegna (distanza minima 2km = solo base_fee)
+  // Stima tariffa consegna (usa ZONA_AVG_KM come default)
+  const BASE_FEE = 3.00;
+  const RATE_PER_KM = 0.65;
+  const ZONA_AVG_KM = 3.5;
+
   let deliveryFeeEstimate: number | null = null;
   try {
     const { data: feeData } = await supabase.rpc("get_zone_median_fee", {
@@ -149,11 +153,13 @@ async function handleGet(token: string, supabase: any): Promise<Response> {
     if (feeData !== null && feeData !== undefined) {
       deliveryFeeEstimate = Number(feeData);
     } else {
-      deliveryFeeEstimate = parseFloat((3.00 + (2 * 0.65)).toFixed(2));
+      deliveryFeeEstimate = parseFloat((BASE_FEE + (ZONA_AVG_KM * RATE_PER_KM)).toFixed(2));
     }
   } catch (_) {
-    deliveryFeeEstimate = parseFloat((3.00 + (2 * 0.65)).toFixed(2));
+    deliveryFeeEstimate = parseFloat((BASE_FEE + (ZONA_AVG_KM * RATE_PER_KM)).toFixed(2));
   }
+
+  const deliveryFeeBreakdown = `€${BASE_FEE.toFixed(2)} fisso + €${(ZONA_AVG_KM * RATE_PER_KM).toFixed(2)} (${ZONA_AVG_KM} km media × €${RATE_PER_KM}) = €${deliveryFeeEstimate.toFixed(2)} stimato`;
 
   // Ritorna dati ordine (solo campi necessari per il form, no dati sensibili)
   return new Response(
@@ -167,6 +173,7 @@ async function handleGet(token: string, supabase: any): Promise<Response> {
         restaurant_name: order.restaurant_name,
         payment_mode: order.payment_mode,
         delivery_fee_estimate: deliveryFeeEstimate,
+        delivery_fee_breakdown: deliveryFeeBreakdown,
       },
     }),
     {
@@ -407,12 +414,15 @@ async function handlePost(token: string, req: Request, supabase: any): Promise<R
   // Invia PIN al cliente via WhatsApp (stub per ora)
   await sendPinToCustomer(recipientPhone, deliveryPin, order.id);
 
-  // Ritorna success con PIN + fee (WhatsApp è stub, frontend lo mostrerà)
+  // Ritorna success con PIN + fee + breakdown (WhatsApp è stub, frontend lo mostrerà)
+  const deliveryFeeBreakdown = `€${BASE_FEE.toFixed(2)} fisso + €${(deliveryFeeShown! - BASE_FEE).toFixed(2)} (${distKm.toFixed(1)} km × €${RATE_PER_KM}) = €${deliveryFeeShown!.toFixed(2)}`;
+
   return new Response(
     JSON.stringify({
       success: true,
       pin: deliveryPin,
       delivery_fee: deliveryFeeShown,
+      delivery_fee_breakdown: deliveryFeeBreakdown,
     }),
     {
       status: 200,

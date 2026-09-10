@@ -391,11 +391,10 @@ async function handlePost(token: string, req: Request, supabase: any): Promise<R
         `Consegna: ${dropoffAddress}\n` +
         (deliveryNotes ? `Dettagli: ${deliveryNotes}\n` : '') +
         `${packageInfo.length > 0 ? `Pacco: ${packageInfo.join(', ')}\n` : ''}` +
-        `💰 Consegna: ${
-          feeFromMedian
-            ? `**€${deliveryFeeShown!.toFixed(2)}** (tariffa media zona Portici)`
-            : `€${BASE_FEE.toFixed(2)} fisso + €${(deliveryFeeShown! - BASE_FEE).toFixed(2)} (${distKm.toFixed(1)} km × €${RATE_PER_KM}) = **€${deliveryFeeShown!.toFixed(2)}**`
-        }\n` +
+        (() => {
+          const feeKmPart = parseFloat((deliveryFeeShown! - BASE_FEE).toFixed(2));
+          return `💰 Consegna: €${BASE_FEE.toFixed(2)} fisso + €${feeKmPart.toFixed(2)}/km media (${ZONA_AVG_KM} km × €${RATE_PER_KM}) = €${deliveryFeeShown!.toFixed(2)} (tariffa media zona Portici)\n`;
+        })() +
         `\n**L'ordine è pronto per il ritiro?**`;
 
       await bot.api.sendMessage(

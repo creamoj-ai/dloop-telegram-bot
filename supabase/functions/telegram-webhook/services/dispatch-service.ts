@@ -12,6 +12,11 @@ import { Bot } from "../deps.ts";
 import { notifyMerchant } from "./notification-service.ts";
 import { sendRiderNotification } from "./telegram-api.ts";
 
+// Costanti fee
+const BASE_FEE = 3.00;
+const RATE_PER_KM = 0.65;
+const ZONA_AVG_KM = 3.5;
+
 /**
  * Broadcast ordine a rider in zona (tier 0 = top reputation).
  * NON assegna direttamente: il primo rider che accetta vince (callback).
@@ -242,7 +247,10 @@ ${o.restaurant_name ? `🏪 Esercente: ${o.restaurant_name}` : ""}
 📱 Telefono: ${recipientPhone}
 ${packageInfo.length > 0 ? `📦 Pacco: ${packageInfo.join(' • ')}` : ""}
 ${o.delivery_notes ? `📝 Note: ${o.delivery_notes}` : ""}
-${order.delivery_fee_shown ? `💰 Compenso: €${order.delivery_fee_shown.toFixed(2)} (tariffa media zona Portici)` : ""}
+${order.delivery_fee_shown ? (() => {
+  const feeKmPart = parseFloat((order.delivery_fee_shown - BASE_FEE).toFixed(2));
+  return `💰 Compenso: €${BASE_FEE.toFixed(2)} fisso + €${feeKmPart.toFixed(2)}/km media (${ZONA_AVG_KM} km × €${RATE_PER_KM}) = €${order.delivery_fee_shown.toFixed(2)} (tariffa media zona Portici)`;
+})() : ""}
 
 **Accetti questo ordine?**
     `.trim();

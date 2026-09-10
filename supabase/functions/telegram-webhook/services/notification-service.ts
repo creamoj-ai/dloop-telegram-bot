@@ -11,6 +11,11 @@ import { Bot } from "../deps.ts";
 import { getSupabaseClient } from "../shared/supabase.ts";
 import { CONSTANTS } from "../shared/config.ts";
 
+// Costanti fee
+const BASE_FEE = 3.00;
+const RATE_PER_KM = 0.65;
+const ZONA_AVG_KM = 3.5;
+
 export type NotificationEvent =
   | "new_order"
   | "rider_assigned"
@@ -84,8 +89,11 @@ function formatMerchantMessage(
   const id = orderId.slice(0, 8).toUpperCase();
   switch (event) {
     case "new_order":
-      return `🟢 Nuovo ordine #${id} — ${deliveryAddress}` +
-        (deliveryFee ? `\n🚚 Costo consegna: €${deliveryFee.toFixed(2)}` : "");
+      if (deliveryFee) {
+        const feeKmPart = parseFloat((deliveryFee - BASE_FEE).toFixed(2));
+        return `🟢 Nuovo ordine #${id} — ${deliveryAddress}\n💰 Consegna: €${BASE_FEE.toFixed(2)} fisso + €${feeKmPart.toFixed(2)}/km media (${ZONA_AVG_KM} km × €${RATE_PER_KM}) = €${deliveryFee.toFixed(2)} (tariffa media zona Portici)`;
+      }
+      return `🟢 Nuovo ordine #${id} — ${deliveryAddress}`;
     case "rider_assigned":
       return `🛵 Rider ${riderName ?? "assegnato"} — ordine #${id}`;
     case "in_delivery":

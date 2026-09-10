@@ -42,8 +42,7 @@ export async function assignRider(
       package_size,
       package_count,
       is_fragile,
-      time_window,
-      notes,
+      delivery_notes,
       delivery_fee_shown,
       dealers!inner(location)
     `)
@@ -156,8 +155,7 @@ async function directAssignRider(
       package_size,
       package_count,
       is_fragile,
-      time_window,
-      notes,
+      delivery_notes,
       delivery_fee_shown
     `)
     .eq("id", orderId)
@@ -243,8 +241,7 @@ ${o.restaurant_name ? `🏪 Esercente: ${o.restaurant_name}` : ""}
 👤 Destinatario: ${recipientName}
 📱 Telefono: ${recipientPhone}
 ${packageInfo.length > 0 ? `📦 Pacco: ${packageInfo.join(' • ')}` : ""}
-${order.time_window ? `⏰ Finestra: ${order.time_window}` : ""}
-${order.notes ? `📝 Note: ${order.notes}` : ""}
+${o.delivery_notes ? `📝 Note: ${o.delivery_notes}` : ""}
 ${order.delivery_fee_shown ? `💰 Compenso: €${order.delivery_fee_shown.toFixed(2)}` : ""}
 
 **Accetti questo ordine?**

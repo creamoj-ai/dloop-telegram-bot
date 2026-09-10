@@ -372,6 +372,7 @@ async function handlePost(token: string, req: Request, supabase: any): Promise<R
         `Consegna: ${dropoffAddress}\n` +
         (deliveryNotes ? `Dettagli: ${deliveryNotes}\n` : '') +
         `${packageInfo.length > 0 ? `Pacco: ${packageInfo.join(', ')}\n` : ''}` +
+        `💰 Costo consegna: €${deliveryFeeShown.toFixed(2)}\n` +
         `\n**L'ordine è pronto per il ritiro?**`;
 
       await bot.api.sendMessage(

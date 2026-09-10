@@ -91,7 +91,8 @@ function formatMerchantMessage(
     case "new_order":
       if (deliveryFee) {
         const feeKmPart = parseFloat((deliveryFee - BASE_FEE).toFixed(2));
-        return `🟢 Nuovo ordine #${id} — ${deliveryAddress}\n💰 Consegna: €${BASE_FEE.toFixed(2)} fisso + €${feeKmPart.toFixed(2)}/km media (${ZONA_AVG_KM} km × €${RATE_PER_KM}) = €${deliveryFee.toFixed(2)} (tariffa media zona Portici)`;
+        const realKm = parseFloat((feeKmPart / RATE_PER_KM).toFixed(1));
+        return `🟢 Nuovo ordine #${id} — ${deliveryAddress}\n💰 Consegna: €${BASE_FEE.toFixed(2)} fisso + €${feeKmPart.toFixed(2)} (${realKm} km × €${RATE_PER_KM}) = €${deliveryFee.toFixed(2)}`;
       }
       return `🟢 Nuovo ordine #${id} — ${deliveryAddress}`;
     case "rider_assigned":

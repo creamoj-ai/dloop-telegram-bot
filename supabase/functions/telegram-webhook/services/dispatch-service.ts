@@ -249,7 +249,8 @@ ${packageInfo.length > 0 ? `📦 Pacco: ${packageInfo.join(' • ')}` : ""}
 ${o.delivery_notes ? `📝 Note: ${o.delivery_notes}` : ""}
 ${order.delivery_fee_shown ? (() => {
   const feeKmPart = parseFloat((order.delivery_fee_shown - BASE_FEE).toFixed(2));
-  return `💰 Compenso: €${BASE_FEE.toFixed(2)} fisso + €${feeKmPart.toFixed(2)}/km media (${ZONA_AVG_KM} km × €${RATE_PER_KM}) = €${order.delivery_fee_shown.toFixed(2)} (tariffa media zona Portici)`;
+  const realKm = parseFloat((feeKmPart / RATE_PER_KM).toFixed(1));
+  return `💰 Compenso: €${BASE_FEE.toFixed(2)} fisso + €${feeKmPart.toFixed(2)} (${realKm} km × €${RATE_PER_KM}) = €${order.delivery_fee_shown.toFixed(2)}`;
 })() : ""}
 
 **Accetti questo ordine?**

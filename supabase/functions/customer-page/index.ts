@@ -277,7 +277,8 @@ async function handlePost(token: string, req: Request, supabase: any): Promise<R
   // Calcola tariffa consegna tramite RPCs (distanza + mediana zona)
   const BASE_FEE = 3.00;
   const RATE_PER_KM = 0.65;
-  let distKm: number = 2; // default fallback
+  const ZONA_AVG_KM = 3.5; // distanza media consegne zona Portici/Napoli
+  let distKm: number = ZONA_AVG_KM; // distanza media zona Portici (fonte: dati mercato delivery Napoli 2026)
   let deliveryFeeShown: number | null = null;
 
   try {
@@ -292,7 +293,7 @@ async function handlePost(token: string, req: Request, supabase: any): Promise<R
         p_lat1: dealer.pickup_lat, p_lng1: dealer.pickup_lng,
         p_lat2: dropoffLat, p_lng2: dropoffLng,
       });
-      distKm = distKmRpc ?? 2; // Assegna alla variabile esterna
+      distKm = distKmRpc ?? ZONA_AVG_KM; // Assegna alla variabile esterna
 
       const { data: feeData } = await supabase.rpc("get_zone_median_fee", {
         p_zona: "portici",

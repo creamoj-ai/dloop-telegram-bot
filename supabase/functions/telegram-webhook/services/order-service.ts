@@ -49,6 +49,7 @@ export async function createDeliveryOrder(
     package_size: orderDraft.package_size || null,
     package_count: orderDraft.package_count || 1,
     is_fragile: orderDraft.is_fragile || false,
+    delivery_fee_shown: orderDraft.delivery_fee_shown || null,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   });

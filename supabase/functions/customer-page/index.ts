@@ -287,6 +287,7 @@ async function handlePost(token: string, req: Request, supabase: any): Promise<R
   const ZONA_AVG_KM = 3.5; // distanza media consegne zona Portici/Napoli
   let distKm: number = ZONA_AVG_KM; // distanza media zona Portici (fonte: dati mercato delivery Napoli 2026)
   let deliveryFeeShown: number | null = null;
+  let feeFromMedian: boolean = false; // Traccia se fee da mediana o calcolata
 
   try {
     const { data: dealer } = await supabase
@@ -307,15 +308,19 @@ async function handlePost(token: string, req: Request, supabase: any): Promise<R
       });
       if (feeData !== null && feeData !== undefined) {
         deliveryFeeShown = Number(feeData);
+        feeFromMedian = true; // Fee da mediana zona
       } else {
         deliveryFeeShown = parseFloat((BASE_FEE + (distKm * RATE_PER_KM)).toFixed(2));
+        feeFromMedian = false; // Fee calcolata su distanza
       }
     } else {
       deliveryFeeShown = parseFloat((BASE_FEE + (distKm * RATE_PER_KM)).toFixed(2));
+      feeFromMedian = false; // Fallback senza coordinate
     }
   } catch (feeErr) {
     console.warn("[customer-page] Fee calculation failed:", feeErr);
     deliveryFeeShown = parseFloat((BASE_FEE + (distKm * RATE_PER_KM)).toFixed(2));
+    feeFromMedian = false; // Fallback su errore
   }
 
   console.log(`[customer-page] deliveryFeeShown calculated: ${deliveryFeeShown}`);
@@ -386,7 +391,11 @@ async function handlePost(token: string, req: Request, supabase: any): Promise<R
         `Consegna: ${dropoffAddress}\n` +
         (deliveryNotes ? `Dettagli: ${deliveryNotes}\n` : '') +
         `${packageInfo.length > 0 ? `Pacco: ${packageInfo.join(', ')}\n` : ''}` +
-        `💰 Consegna: €${BASE_FEE.toFixed(2)} fisso + €${(deliveryFeeShown! - BASE_FEE).toFixed(2)} (${distKm.toFixed(1)} km × €${RATE_PER_KM}) = **€${deliveryFeeShown!.toFixed(2)}**\n` +
+        `💰 Consegna: ${
+          feeFromMedian
+            ? `**€${deliveryFeeShown!.toFixed(2)}** (tariffa media zona Portici)`
+            : `€${BASE_FEE.toFixed(2)} fisso + €${(deliveryFeeShown! - BASE_FEE).toFixed(2)} (${distKm.toFixed(1)} km × €${RATE_PER_KM}) = **€${deliveryFeeShown!.toFixed(2)}**`
+        }\n` +
         `\n**L'ordine è pronto per il ritiro?**`;
 
       await bot.api.sendMessage(

@@ -32,7 +32,21 @@ export async function assignRider(
   // 1. Recupera ordine per pickup_point location (PostGIS)
   const { data: order, error: orderError } = await supabase
     .from(CONSTANTS.TABLE_ORDERS)
-    .select("*, dealers!inner(location)")
+    .select(`
+      id,
+      pickup_address,
+      dropoff_address,
+      customer_name,
+      customer_phone,
+      restaurant_name,
+      package_size,
+      package_count,
+      is_fragile,
+      time_window,
+      notes,
+      delivery_fee_shown,
+      dealers!inner(location)
+    `)
     .eq("id", orderId)
     .single();
 
@@ -132,7 +146,20 @@ async function directAssignRider(
   // Notifica rider
   const { data: order } = await supabase
     .from(CONSTANTS.TABLE_ORDERS)
-    .select("*")
+    .select(`
+      id,
+      pickup_address,
+      dropoff_address,
+      customer_name,
+      customer_phone,
+      restaurant_name,
+      package_size,
+      package_count,
+      is_fragile,
+      time_window,
+      notes,
+      delivery_fee_shown
+    `)
     .eq("id", orderId)
     .single();
 

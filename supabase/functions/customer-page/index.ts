@@ -304,6 +304,8 @@ async function handlePost(token: string, req: Request, supabase: any): Promise<R
     deliveryFeeShown = parseFloat((3.00 + (2 * 0.65)).toFixed(2));
   }
 
+  console.log(`[customer-page] deliveryFeeShown calculated: ${deliveryFeeShown}`);
+
   // Update ordine: compila dati cliente + trigger broadcast
   // Setta broadcast_tier=0 e broadcast_started_at per triggerare escalation-tick
   const updateData: Record<string, unknown> = {
@@ -315,9 +317,9 @@ async function handlePost(token: string, req: Request, supabase: any): Promise<R
     customer_phone: recipientPhone,
     status: "pending", // Rimane pending, escalation-tick gestirà il broadcast
     delivery_pin: deliveryPin,
+    delivery_fee_shown: deliveryFeeShown ?? 4.30, // Forza sempre un valore
     broadcast_tier: 0, // Tier iniziale (top reputation)
     broadcast_started_at: new Date().toISOString(), // Trigger broadcast
-    ...(deliveryFeeShown !== null ? { delivery_fee_shown: deliveryFeeShown } : {}),
     // dropoff_point (geography) NON viene scritto - resta NULL
   };
 

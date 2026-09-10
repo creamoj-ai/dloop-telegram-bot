@@ -19,6 +19,9 @@ verify_jwt = false
 [functions.whatsapp-intake]
 verify_jwt = false
 
+[functions.customer-page]
+verify_jwt = false
+
 [functions.weekly-billing]
 verify_jwt = false
 # Cron schedule: ogni lunedi 00:00 UTC

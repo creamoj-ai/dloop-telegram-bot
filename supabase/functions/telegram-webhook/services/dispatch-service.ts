@@ -201,10 +201,10 @@ async function notifyRiders(bot: Bot, orderId: string, order: Order, riders: Rid
     if (order.is_fragile) packageInfo.push(`⚠️ Fragile`);
 
     const o = order as any;
-    const pickupPoint    = o.pickup_point    || o.pickup_address    || "N/D";
-    const deliveryAddr   = o.delivery_address || o.dropoff_address || o.customer_address  || "N/D";
-    const recipientName  = o.recipient_name  || o.customer_name     || "N/D";
-    const recipientPhone = o.recipient_phone || o.customer_phone    || "N/D";
+    const pickupPoint    = o.pickup_address    || o.pickup_point    || "N/D";
+    const deliveryAddr   = o.dropoff_address   || o.customer_address || o.delivery_address || "N/D";
+    const recipientName  = o.customer_name     || o.recipient_name  || "N/D";
+    const recipientPhone = o.customer_phone    || o.recipient_phone || "N/D";
 
     const message = `
 🚚 **NUOVO ORDINE**

@@ -140,10 +140,9 @@ async function handleGet(token: string, supabase: any): Promise<Response> {
     );
   }
 
-  // Stima tariffa consegna (usa ZONA_AVG_KM come default)
+  // Stima tariffa consegna (usa mediana zona Portici come default)
   const BASE_FEE = 3.00;
   const RATE_PER_KM = 0.65;
-  const ZONA_AVG_KM = 3.5;
 
   let deliveryFeeEstimate: number | null = null;
   try {
@@ -153,10 +152,10 @@ async function handleGet(token: string, supabase: any): Promise<Response> {
     if (feeData !== null && feeData !== undefined) {
       deliveryFeeEstimate = Number(feeData);
     } else {
-      deliveryFeeEstimate = parseFloat((BASE_FEE + (ZONA_AVG_KM * RATE_PER_KM)).toFixed(2));
+      deliveryFeeEstimate = 3.58; // mediana zona Portici da rider_listino
     }
   } catch (_) {
-    deliveryFeeEstimate = parseFloat((BASE_FEE + (ZONA_AVG_KM * RATE_PER_KM)).toFixed(2));
+    deliveryFeeEstimate = 3.58; // mediana zona Portici da rider_listino
   }
 
   const feeKmPart = parseFloat((deliveryFeeEstimate - BASE_FEE).toFixed(2));
@@ -286,8 +285,6 @@ async function handlePost(token: string, req: Request, supabase: any): Promise<R
   // Calcola tariffa consegna tramite RPCs (distanza + mediana zona)
   const BASE_FEE = 3.00;
   const RATE_PER_KM = 0.65;
-  const ZONA_AVG_KM = 3.5; // distanza media consegne zona Portici/Napoli
-  let distKm: number = ZONA_AVG_KM; // distanza media zona Portici (fonte: dati mercato delivery Napoli 2026)
   let deliveryFeeShown: number | null = null;
   let feeFromMedian: boolean = false; // Traccia se fee da mediana o calcolata
 
@@ -303,7 +300,7 @@ async function handlePost(token: string, req: Request, supabase: any): Promise<R
         p_lat1: dealer.pickup_lat, p_lng1: dealer.pickup_lng,
         p_lat2: dropoffLat, p_lng2: dropoffLng,
       });
-      distKm = distKmRpc ?? ZONA_AVG_KM; // Assegna alla variabile esterna
+      const distKm = distKmRpc ?? 3.5; // distanza media zona se calcolo fallisce
 
       const { data: feeData } = await supabase.rpc("get_zone_median_fee", {
         p_zona: "portici",
@@ -316,12 +313,12 @@ async function handlePost(token: string, req: Request, supabase: any): Promise<R
         feeFromMedian = false; // Fee calcolata su distanza
       }
     } else {
-      deliveryFeeShown = parseFloat((BASE_FEE + (distKm * RATE_PER_KM)).toFixed(2));
+      deliveryFeeShown = 3.58; // mediana zona Portici da rider_listino
       feeFromMedian = false; // Fallback senza coordinate
     }
   } catch (feeErr) {
     console.warn("[customer-page] Fee calculation failed:", feeErr);
-    deliveryFeeShown = parseFloat((BASE_FEE + (distKm * RATE_PER_KM)).toFixed(2));
+    deliveryFeeShown = 3.58; // mediana zona Portici da rider_listino
     feeFromMedian = false; // Fallback su errore
   }
 

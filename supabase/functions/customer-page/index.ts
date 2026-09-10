@@ -144,13 +144,16 @@ async function handleGet(token: string, supabase: any): Promise<Response> {
   let deliveryFeeEstimate: number | null = null;
   try {
     const { data: feeData } = await supabase.rpc("get_zone_median_fee", {
-      p_zone: "portici",
-      p_distance_km: 2,
-      p_package_size: order.package_size,
-      p_package_count: order.package_count,
+      p_zona: "portici",
     });
-    if (feeData !== null && feeData !== undefined) deliveryFeeEstimate = Number(feeData);
-  } catch (_) { /* ignora errori RPC, cliente vedrà stima assente */ }
+    if (feeData !== null && feeData !== undefined) {
+      deliveryFeeEstimate = Number(feeData);
+    } else {
+      deliveryFeeEstimate = parseFloat((3.00 + (2 * 0.65)).toFixed(2));
+    }
+  } catch (_) {
+    deliveryFeeEstimate = parseFloat((3.00 + (2 * 0.65)).toFixed(2));
+  }
 
   // Ritorna dati ordine (solo campi necessari per il form, no dati sensibili)
   return new Response(
@@ -286,15 +289,19 @@ async function handlePost(token: string, req: Request, supabase: any): Promise<R
         p_lat2: dropoffLat, p_lng2: dropoffLng,
       });
       const { data: feeData } = await supabase.rpc("get_zone_median_fee", {
-        p_zone: "portici",
-        p_distance_km: distKm ?? 2,
-        p_package_size: order.package_size,
-        p_package_count: order.package_count,
+        p_zona: "portici",
       });
-      if (feeData !== null && feeData !== undefined) deliveryFeeShown = Number(feeData);
+      if (feeData !== null && feeData !== undefined) {
+        deliveryFeeShown = Number(feeData);
+      } else {
+        deliveryFeeShown = parseFloat((3.00 + ((distKm ?? 2) * 0.65)).toFixed(2));
+      }
+    } else {
+      deliveryFeeShown = parseFloat((3.00 + (2 * 0.65)).toFixed(2));
     }
   } catch (feeErr) {
     console.warn("[customer-page] Fee calculation failed:", feeErr);
+    deliveryFeeShown = parseFloat((3.00 + (2 * 0.65)).toFixed(2));
   }
 
   // Update ordine: compila dati cliente + trigger broadcast

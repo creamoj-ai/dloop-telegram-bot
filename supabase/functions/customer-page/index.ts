@@ -275,7 +275,11 @@ async function handlePost(token: string, req: Request, supabase: any): Promise<R
   const deliveryPin = generatePin();
 
   // Calcola tariffa consegna tramite RPCs (distanza + mediana zona)
+  const BASE_FEE = 3.00;
+  const RATE_PER_KM = 0.65;
+  let distKm: number = 2; // default fallback
   let deliveryFeeShown: number | null = null;
+
   try {
     const { data: dealer } = await supabase
       .from("dealers")
@@ -284,24 +288,26 @@ async function handlePost(token: string, req: Request, supabase: any): Promise<R
       .maybeSingle();
 
     if (dealer?.pickup_lat && dealer?.pickup_lng && dropoffLat && dropoffLng) {
-      const { data: distKm } = await supabase.rpc("calculate_distance_km", {
+      const { data: distKmRpc } = await supabase.rpc("calculate_distance_km", {
         p_lat1: dealer.pickup_lat, p_lng1: dealer.pickup_lng,
         p_lat2: dropoffLat, p_lng2: dropoffLng,
       });
+      distKm = distKmRpc ?? 2; // Assegna alla variabile esterna
+
       const { data: feeData } = await supabase.rpc("get_zone_median_fee", {
         p_zona: "portici",
       });
       if (feeData !== null && feeData !== undefined) {
         deliveryFeeShown = Number(feeData);
       } else {
-        deliveryFeeShown = parseFloat((3.00 + ((distKm ?? 2) * 0.65)).toFixed(2));
+        deliveryFeeShown = parseFloat((BASE_FEE + (distKm * RATE_PER_KM)).toFixed(2));
       }
     } else {
-      deliveryFeeShown = parseFloat((3.00 + (2 * 0.65)).toFixed(2));
+      deliveryFeeShown = parseFloat((BASE_FEE + (distKm * RATE_PER_KM)).toFixed(2));
     }
   } catch (feeErr) {
     console.warn("[customer-page] Fee calculation failed:", feeErr);
-    deliveryFeeShown = parseFloat((3.00 + (2 * 0.65)).toFixed(2));
+    deliveryFeeShown = parseFloat((BASE_FEE + (distKm * RATE_PER_KM)).toFixed(2));
   }
 
   console.log(`[customer-page] deliveryFeeShown calculated: ${deliveryFeeShown}`);
@@ -372,7 +378,7 @@ async function handlePost(token: string, req: Request, supabase: any): Promise<R
         `Consegna: ${dropoffAddress}\n` +
         (deliveryNotes ? `Dettagli: ${deliveryNotes}\n` : '') +
         `${packageInfo.length > 0 ? `Pacco: ${packageInfo.join(', ')}\n` : ''}` +
-        `💰 Costo consegna: €${deliveryFeeShown.toFixed(2)}\n` +
+        `💰 Consegna: €${BASE_FEE.toFixed(2)} fisso + €${(deliveryFeeShown! - BASE_FEE).toFixed(2)} (${distKm.toFixed(1)} km × €${RATE_PER_KM}) = **€${deliveryFeeShown!.toFixed(2)}**\n` +
         `\n**L'ordine è pronto per il ritiro?**`;
 
       await bot.api.sendMessage(

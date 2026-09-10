@@ -242,7 +242,7 @@ ${o.restaurant_name ? `🏪 Esercente: ${o.restaurant_name}` : ""}
 📱 Telefono: ${recipientPhone}
 ${packageInfo.length > 0 ? `📦 Pacco: ${packageInfo.join(' • ')}` : ""}
 ${o.delivery_notes ? `📝 Note: ${o.delivery_notes}` : ""}
-${order.delivery_fee_shown ? `💰 Compenso: €${order.delivery_fee_shown.toFixed(2)}` : ""}
+${order.delivery_fee_shown ? `💰 Compenso: €3.00 fisso + €${(order.delivery_fee_shown - 3.00).toFixed(2)} km = €${order.delivery_fee_shown.toFixed(2)}` : ""}
 
 **Accetti questo ordine?**
     `.trim();

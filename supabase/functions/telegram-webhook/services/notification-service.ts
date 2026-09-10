@@ -40,7 +40,7 @@ export async function notifyMerchant(
   // Two-query approach to avoid FK ambiguity (orders use dealer_contact_id, not dealer_id)
   const { data: orderData, error: orderError } = await supabase
     .from(CONSTANTS.TABLE_ORDERS)
-    .select("dropoff_address, dealer_contact_id")
+    .select("dropoff_address, dealer_contact_id, delivery_fee_shown")
     .eq("id", orderId)
     .single();
 
@@ -63,7 +63,8 @@ export async function notifyMerchant(
   }
 
   const deliveryAddress = (orderData as any).dropoff_address || "N/D";
-  const text = formatMerchantMessage(event, orderId, deliveryAddress, riderName);
+  const deliveryFee = (orderData as any).delivery_fee_shown ?? null;
+  const text = formatMerchantMessage(event, orderId, deliveryAddress, riderName, deliveryFee);
 
   try {
     await bot.api.sendMessage(telegramId, text);
@@ -77,12 +78,14 @@ function formatMerchantMessage(
   event: NotificationEvent,
   orderId: string,
   deliveryAddress: string,
-  riderName?: string
+  riderName?: string,
+  deliveryFee?: number | null
 ): string {
   const id = orderId.slice(0, 8).toUpperCase();
   switch (event) {
     case "new_order":
-      return `🟢 Nuovo ordine #${id} — ${deliveryAddress}`;
+      return `🟢 Nuovo ordine #${id} — ${deliveryAddress}` +
+        (deliveryFee ? `\n🚚 Costo consegna: €${deliveryFee.toFixed(2)}` : "");
     case "rider_assigned":
       return `🛵 Rider ${riderName ?? "assegnato"} — ordine #${id}`;
     case "in_delivery":

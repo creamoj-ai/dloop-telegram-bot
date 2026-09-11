@@ -43,7 +43,9 @@ serve(async (req: Request) => {
   try {
     console.log("[escalation-tick] Running escalation check...");
 
+    // Cancel timed-out orders first
     await cancelTimedOutOrders();
+
     await escalatePendingOrders();
 
     return new Response(JSON.stringify({ success: true }), {
@@ -64,24 +66,41 @@ serve(async (req: Request) => {
  * Notifica il merchant via bot.
  */
 async function cancelTimedOutOrders() {
-  const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+  const now = new Date();
+  const fiveMinutesAgo = new Date(now.getTime() - 5 * 60 * 1000);
+  const fiveMinutesAgoISO = fiveMinutesAgo.toISOString();
 
+  console.log(`[escalation-tick] timeout check fiveMinutesAgo=${fiveMinutesAgoISO}`);
+
+  // Query ordini con timeout
   const { data: orders, error } = await supabase
     .from("orders")
-    .select("id, dealer_contact_id, broadcast_started_at")
+    .select("id, dealer_contact_id, broadcast_started_at, dispatch_status, status")
     .eq("dispatch_status", "pending")
-    .lt("broadcast_started_at", fiveMinutesAgo)
-    .neq("status", "cancelled");
+    .neq("status", "cancelled")
+    .lt("broadcast_started_at", fiveMinutesAgoISO);
+
+  console.log(`[escalation-tick] timeout check trovati=${orders?.length || 0} ordini`);
 
   if (error) {
     console.error("[escalation-tick] Error fetching timed-out orders:", error);
     return;
   }
 
-  console.log(`[escalation-tick] timeout check: fiveMinutesAgo=${fiveMinutesAgo}, trovati=${orders?.length ?? 0}`);
+  if (!orders || orders.length === 0) {
+    console.log("[escalation-tick] No timed-out orders to cancel");
+    return;
+  }
 
-  if (!orders || orders.length === 0) return;
+  // Log ordini trovati
+  console.log(`[escalation-tick] Orders to cancel: ${JSON.stringify(orders.map(o => ({
+    id: o.id,
+    broadcast_started_at: o.broadcast_started_at,
+    dispatch_status: o.dispatch_status,
+    status: o.status
+  })))}`);
 
+  // Cancella ordini uno per uno e notifica merchant
   for (const order of orders) {
     const { error: updateError } = await supabase
       .from("orders")
@@ -95,6 +114,7 @@ async function cancelTimedOutOrders() {
 
     console.log(`[escalation-tick] Ordine ${order.id} annullato per timeout dispatch (5 min)`);
 
+    // Notifica merchant
     if (!order.dealer_contact_id) continue;
 
     const { data: dealer } = await supabase
@@ -113,6 +133,7 @@ async function cancelTimedOutOrders() {
           text: `❌ Ordine #${orderShortId} annullato — nessun rider disponibile entro 5 minuti.`,
         }),
       });
+      console.log(`[escalation-tick] Merchant notificato per ordine ${order.id}`);
     }
   }
 }

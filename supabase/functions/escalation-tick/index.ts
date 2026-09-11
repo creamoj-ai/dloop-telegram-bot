@@ -104,7 +104,7 @@ async function cancelTimedOutOrders() {
   for (const order of orders) {
     const { error: updateError } = await supabase
       .from("orders")
-      .update({ status: "cancelled", dispatch_status: "failed" })
+      .update({ status: "cancelled", dispatch_status: "pending" })
       .eq("id", order.id);
 
     if (updateError) {

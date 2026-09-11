@@ -43,6 +43,7 @@ serve(async (req: Request) => {
   try {
     console.log("[escalation-tick] Running escalation check...");
 
+    await cancelTimedOutOrders();
     await escalatePendingOrders();
 
     return new Response(JSON.stringify({ success: true }), {
@@ -57,6 +58,62 @@ serve(async (req: Request) => {
     });
   }
 });
+
+/**
+ * Annulla ordini in broadcasting da più di 5 minuti senza rider accettato.
+ * Notifica il merchant via bot.
+ */
+async function cancelTimedOutOrders() {
+  const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+
+  const { data: orders, error } = await supabase
+    .from("orders")
+    .select("id, dealer_contact_id")
+    .eq("dispatch_status", "broadcasting")
+    .lt("broadcast_started_at", fiveMinutesAgo)
+    .neq("status", "cancelled");
+
+  if (error) {
+    console.error("[escalation-tick] Error fetching timed-out orders:", error);
+    return;
+  }
+
+  if (!orders || orders.length === 0) return;
+
+  for (const order of orders) {
+    const { error: updateError } = await supabase
+      .from("orders")
+      .update({ status: "cancelled", dispatch_status: "failed" })
+      .eq("id", order.id);
+
+    if (updateError) {
+      console.error(`[escalation-tick] Error cancelling order ${order.id}:`, updateError);
+      continue;
+    }
+
+    console.log(`[escalation-tick] Ordine ${order.id} annullato per timeout dispatch (5 min)`);
+
+    if (!order.dealer_contact_id) continue;
+
+    const { data: dealer } = await supabase
+      .from("dealers")
+      .select("telegram_user_id")
+      .eq("id", order.dealer_contact_id)
+      .maybeSingle();
+
+    const orderShortId = order.id.slice(0, 8).toUpperCase();
+    if (dealer?.telegram_user_id && CONFIG.telegram.token) {
+      await fetch(`https://api.telegram.org/bot${CONFIG.telegram.token}/sendMessage`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          chat_id: dealer.telegram_user_id,
+          text: `❌ Ordine #${orderShortId} annullato — nessun rider disponibile entro 5 minuti.`,
+        }),
+      });
+    }
+  }
+}
 
 /**
  * Scala tier per ordini PENDING con broadcast_started_at:

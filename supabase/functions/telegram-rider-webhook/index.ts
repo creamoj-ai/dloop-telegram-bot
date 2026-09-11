@@ -220,6 +220,33 @@ bot.callbackQuery(/^decline_order_(.+)$/, async (ctx) => {
     );
 
     console.log(`[rider-bot] Rider ${rider.id} declined order ${orderId}`);
+
+    // Notifica merchant: rider ha rifiutato, broadcast continua
+    const { data: order } = await supabase
+      .from("orders")
+      .select("dealer_contact_id")
+      .eq("id", orderId)
+      .maybeSingle();
+
+    if (order?.dealer_contact_id) {
+      const { data: dealer } = await supabase
+        .from("dealers")
+        .select("telegram_user_id")
+        .eq("id", order.dealer_contact_id)
+        .maybeSingle();
+
+      const orderShortId = orderId.slice(0, 8).toUpperCase();
+      if (dealer?.telegram_user_id && TELEGRAM_MERCHANT_BOT_TOKEN) {
+        await fetch(`https://api.telegram.org/bot${TELEGRAM_MERCHANT_BOT_TOKEN}/sendMessage`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            chat_id: dealer.telegram_user_id,
+            text: `⏳ Ordine #${orderShortId} — rider non disponibile, broadcast in corso ad altri rider...`,
+          }),
+        });
+      }
+    }
   } catch (err) {
     console.error("[rider-bot] Errore handleDeclineOrder:", err);
     await ctx.answerCallbackQuery({ text: "Errore rifiuto ordine", show_alert: true });

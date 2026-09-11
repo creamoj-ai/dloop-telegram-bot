@@ -68,8 +68,8 @@ async function cancelTimedOutOrders() {
 
   const { data: orders, error } = await supabase
     .from("orders")
-    .select("id, dealer_contact_id")
-    .eq("dispatch_status", "broadcasting")
+    .select("id, dealer_contact_id, broadcast_started_at")
+    .eq("dispatch_status", "pending")
     .lt("broadcast_started_at", fiveMinutesAgo)
     .neq("status", "cancelled");
 
@@ -77,6 +77,8 @@ async function cancelTimedOutOrders() {
     console.error("[escalation-tick] Error fetching timed-out orders:", error);
     return;
   }
+
+  console.log(`[escalation-tick] timeout check: fiveMinutesAgo=${fiveMinutesAgo}, trovati=${orders?.length ?? 0}`);
 
   if (!orders || orders.length === 0) return;
 

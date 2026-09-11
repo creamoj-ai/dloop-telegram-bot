@@ -213,10 +213,10 @@ bot.callbackQuery(/^decline_order_(.+)$/, async (ctx) => {
     }
 
     await ctx.answerCallbackQuery({ text: "Ordine rifiutato" });
-    await ctx.editMessageReplyMarkup({ reply_markup: { inline_keyboard: [] } });
     await ctx.editMessageText(
       `❌ **Ordine rifiutato**\n\n` +
-      `L'ordine verrà offerto ad altri rider.`
+      `L'ordine verrà offerto ad altri rider.`,
+      { parse_mode: "Markdown" }
     );
 
     console.log(`[rider-bot] Rider ${rider.id} declined order ${orderId}`);

@@ -337,6 +337,15 @@ bot.callbackQuery(/^delivery_confirmed_(.+)$/, async (ctx) => {
       return;
     }
 
+    // Salva l'ordine specifico sul rider così il PIN handler sa quale chiudere
+    const riderTelegramId = ctx.from?.id;
+    if (riderTelegramId) {
+      await supabase
+        .from("riders")
+        .update({ pending_pin_order_id: orderId })
+        .eq("telegram_user_id", riderTelegramId);
+    }
+
     await ctx.answerCallbackQuery();
     await ctx.editMessageReplyMarkup({ reply_markup: { inline_keyboard: [] } });
     await ctx.reply(`🔐 Inserisci il PIN a 4 cifre mostrato dal cliente:`);
@@ -357,21 +366,20 @@ bot.on("message:text", async (ctx) => {
   try {
     const { data: rider } = await supabase
       .from("riders")
-      .select("id")
+      .select("id, pending_pin_order_id")
       .eq("telegram_user_id", riderTelegramId)
       .maybeSingle();
 
-    if (!rider) return;
+    if (!rider?.pending_pin_order_id) return;
 
-    const { data: rows } = await supabase
+    const { data: order } = await supabase
       .from("orders")
       .select("id, delivery_pin, dealer_contact_id")
+      .eq("id", rider.pending_pin_order_id)
       .eq("assigned_rider_id", rider.id)
       .eq("status", "waiting_pin")
-      .order("created_at", { ascending: false })
-      .limit(1);
+      .maybeSingle();
 
-    const order = rows?.[0];
     if (!order) return;
 
     if (text !== order.delivery_pin) {
@@ -388,6 +396,11 @@ bot.on("message:text", async (ctx) => {
         delivered_at: new Date().toISOString(),
       })
       .eq("id", order.id);
+
+    await supabase
+      .from("riders")
+      .update({ pending_pin_order_id: null })
+      .eq("id", rider.id);
 
     const orderShortId = order.id.slice(0, 8).toUpperCase();
     await ctx.reply(`✅ **Consegna completata!**\n\nOrdine #${orderShortId} chiuso. Ottimo lavoro! 🎉`);

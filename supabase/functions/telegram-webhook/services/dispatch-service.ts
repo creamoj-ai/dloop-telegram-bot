@@ -17,6 +17,93 @@ const BASE_FEE = 3.00;
 const RATE_PER_KM = 0.65;
 const ZONA_AVG_KM = 3.5;
 
+// ─── Blocchi operativi interni (non esposti a cliente/merchant) ───────────────
+// Fascia cliente: 9-13 e 15-20. Blocchi interni di conteggio: ogni 2h.
+const MAX_ORDERS_PER_BLOCK = 4;
+const ITALY_TZ = "Europe/Rome";
+const DISPATCH_BLOCKS = [
+  { label: "09-11", startH: 9,  endH: 11 },
+  { label: "11-13", startH: 11, endH: 13 },
+  { label: "15-17", startH: 15, endH: 17 },
+  { label: "17-19", startH: 17, endH: 19 },
+  { label: "19-21", startH: 19, endH: 21 },
+] as const;
+
+function italyHourOf(d: Date): number {
+  return parseInt(
+    d.toLocaleTimeString("en-GB", { timeZone: ITALY_TZ, hour: "2-digit", hour12: false })
+  );
+}
+
+function italyDateOf(d: Date): string {
+  return d.toLocaleDateString("sv", { timeZone: ITALY_TZ }); // "YYYY-MM-DD"
+}
+
+// Converte un'ora in ora italiana in UTC, gestendo DST automaticamente.
+function italyHourToUtc(dateStr: string, h: number): Date {
+  const t = new Date(`${dateStr}T${String(h).padStart(2, "0")}:00:00Z`);
+  const actual = parseInt(
+    t.toLocaleTimeString("en-GB", { timeZone: ITALY_TZ, hour: "2-digit", hour12: false })
+  );
+  return new Date(t.getTime() - (actual - h) * 3_600_000);
+}
+
+function getCurrentDispatchBlock(
+  now: Date
+): { label: string; startUtc: Date; endUtc: Date } | null {
+  const h = italyHourOf(now);
+  const block = DISPATCH_BLOCKS.find(b => h >= b.startH && h < b.endH);
+  if (!block) return null;
+  const ds = italyDateOf(now);
+  return {
+    label: block.label,
+    startUtc: italyHourToUtc(ds, block.startH),
+    endUtc:   italyHourToUtc(ds, block.endH),
+  };
+}
+
+/**
+ * Esclude dal broadcast i rider che hanno già MAX_ORDERS_PER_BLOCK ordini
+ * con created_at nel blocco di 2h corrente. Fallback safe: restituisce
+ * tutti i rider se la query fallisce o siamo fuori finestra.
+ */
+async function filterRidersByCapacity(riders: Rider[]): Promise<Rider[]> {
+  if (riders.length === 0) return [];
+  const block = getCurrentDispatchBlock(new Date());
+  if (!block) return riders; // Fuori finestre operative, nessun limite
+
+  const supabase = getSupabaseClient();
+  const riderIds = riders.map(r => r.id);
+
+  const { data, error } = await supabase
+    .from("orders")
+    .select("assigned_rider_id")
+    .in("assigned_rider_id", riderIds)
+    .in("status", ["assigned", "picked_up", "in_delivery", "waiting_pin", "completed"])
+    .gte("created_at", block.startUtc.toISOString())
+    .lt("created_at",  block.endUtc.toISOString());
+
+  if (error) {
+    console.error("[dispatch] filterRidersByCapacity:", error);
+    return riders; // Fallback: broadcast comunque
+  }
+
+  const count = new Map<string, number>();
+  for (const o of data ?? []) {
+    count.set(o.assigned_rider_id, (count.get(o.assigned_rider_id) ?? 0) + 1);
+  }
+
+  const available = riders.filter(r => (count.get(r.id) ?? 0) < MAX_ORDERS_PER_BLOCK);
+  const skipped = riders.length - available.length;
+  if (skipped > 0) {
+    console.log(
+      `[dispatch] Blocco ${block.label}: esclusi ${skipped} rider (limite ${MAX_ORDERS_PER_BLOCK} consegne/blocco)`
+    );
+  }
+  return available;
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
 /**
  * Broadcast ordine a rider in zona (tier 0 = top reputation).
  * NON assegna direttamente: il primo rider che accetta vince (callback).
@@ -48,6 +135,7 @@ export async function assignRider(
       package_count,
       is_fragile,
       delivery_notes,
+      delivery_slot,
       delivery_fee_shown,
       dealers!inner(location)
     `)
@@ -78,7 +166,8 @@ export async function assignRider(
   }
 
   // 2. Broadcast tier 0: rider online, top reputation (>= 70), nearest in radius
-  const riders = await getRidersByTier(0, merchantLat, merchantLon, CONSTANTS.BROADCAST.radius_km);
+  const allRiders = await getRidersByTier(0, merchantLat, merchantLon, CONSTANTS.BROADCAST.radius_km);
+  const riders = await filterRidersByCapacity(allRiders);
 
   if (riders.length === 0) {
     console.warn("[dispatch-service] Nessun rider tier 0 disponibile, escalation via cron");
@@ -246,6 +335,7 @@ ${o.restaurant_name ? `🏪 Esercente: ${o.restaurant_name}` : ""}
 👤 Destinatario: ${recipientName}
 📱 Telefono: ${recipientPhone}
 ${packageInfo.length > 0 ? `📦 Pacco: ${packageInfo.join(' • ')}` : ""}
+${o.delivery_slot ? `⏰ Fascia: ${o.delivery_slot}` : ""}
 ${o.delivery_notes ? `📝 Note: ${o.delivery_notes}` : ""}
 ${order.delivery_fee_shown ? (() => {
   const feeKmPart = parseFloat((order.delivery_fee_shown - BASE_FEE).toFixed(2));

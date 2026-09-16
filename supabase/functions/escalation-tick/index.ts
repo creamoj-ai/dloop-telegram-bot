@@ -32,6 +32,84 @@ const CONFIG = {
 
 const supabase = createClient(CONFIG.supabase.url, CONFIG.supabase.serviceRoleKey);
 
+// ─── Blocchi operativi interni (non esposti a cliente/merchant) ───────────────
+const MAX_ORDERS_PER_BLOCK = 4;
+const ITALY_TZ = "Europe/Rome";
+const DISPATCH_BLOCKS = [
+  { label: "09-11", startH: 9,  endH: 11 },
+  { label: "11-13", startH: 11, endH: 13 },
+  { label: "15-17", startH: 15, endH: 17 },
+  { label: "17-19", startH: 17, endH: 19 },
+  { label: "19-21", startH: 19, endH: 21 },
+] as const;
+
+function italyHourOf(d: Date): number {
+  return parseInt(
+    d.toLocaleTimeString("en-GB", { timeZone: ITALY_TZ, hour: "2-digit", hour12: false })
+  );
+}
+
+function italyDateOf(d: Date): string {
+  return d.toLocaleDateString("sv", { timeZone: ITALY_TZ });
+}
+
+function italyHourToUtc(dateStr: string, h: number): Date {
+  const t = new Date(`${dateStr}T${String(h).padStart(2, "0")}:00:00Z`);
+  const actual = parseInt(
+    t.toLocaleTimeString("en-GB", { timeZone: ITALY_TZ, hour: "2-digit", hour12: false })
+  );
+  return new Date(t.getTime() - (actual - h) * 3_600_000);
+}
+
+function getCurrentDispatchBlock(
+  now: Date
+): { label: string; startUtc: Date; endUtc: Date } | null {
+  const h = italyHourOf(now);
+  const block = DISPATCH_BLOCKS.find(b => h >= b.startH && h < b.endH);
+  if (!block) return null;
+  const ds = italyDateOf(now);
+  return {
+    label: block.label,
+    startUtc: italyHourToUtc(ds, block.startH),
+    endUtc:   italyHourToUtc(ds, block.endH),
+  };
+}
+
+async function filterRidersByCapacity(riders: any[]): Promise<any[]> {
+  if (riders.length === 0) return [];
+  const block = getCurrentDispatchBlock(new Date());
+  if (!block) return riders;
+
+  const riderIds = riders.map((r: any) => r.id);
+  const { data, error } = await supabase
+    .from("orders")
+    .select("assigned_rider_id")
+    .in("assigned_rider_id", riderIds)
+    .in("status", ["assigned", "picked_up", "in_delivery", "waiting_pin", "completed"])
+    .gte("created_at", block.startUtc.toISOString())
+    .lt("created_at",  block.endUtc.toISOString());
+
+  if (error) {
+    console.error("[escalation-tick] filterRidersByCapacity:", error);
+    return riders;
+  }
+
+  const count = new Map<string, number>();
+  for (const o of data ?? []) {
+    count.set(o.assigned_rider_id, (count.get(o.assigned_rider_id) ?? 0) + 1);
+  }
+
+  const available = riders.filter((r: any) => (count.get(r.id) ?? 0) < MAX_ORDERS_PER_BLOCK);
+  const skipped = riders.length - available.length;
+  if (skipped > 0) {
+    console.log(
+      `[escalation-tick] Blocco ${block.label}: esclusi ${skipped} rider (limite ${MAX_ORDERS_PER_BLOCK} consegne/blocco)`
+    );
+  }
+  return available;
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
 serve(async (req: Request) => {
   // CORS preflight
   if (req.method === "OPTIONS") {
@@ -194,7 +272,8 @@ async function escalatePendingOrders() {
     }
 
     const radius = newTier === 3 ? CONFIG.broadcast.extendedRadiusKm : CONFIG.broadcast.radiusKm;
-    const riders = await getRidersByTier(newTier, merchantLat, merchantLon, radius);
+    const allRiders = await getRidersByTier(newTier, merchantLat, merchantLon, radius);
+    const riders = await filterRidersByCapacity(allRiders);
 
     if (riders.length === 0) {
       console.warn(`[escalation-tick] Tier ${newTier} nessun rider disponibile per ${order.id}`);
@@ -270,8 +349,8 @@ Ordine: #${orderId.slice(0, 8).toUpperCase()}
 👤 Destinatario: ${order.recipient_name}
 📱 Telefono: ${order.recipient_phone}
 ${packageInfo.length > 0 ? `📦 Pacco: ${packageInfo.join(' • ')}` : ""}
-${order.time_window ? `⏰ Finestra: ${order.time_window}` : ""}
-${order.notes ? `📝 Note: ${order.notes}` : ""}
+${order.delivery_slot ? `⏰ Fascia: ${order.delivery_slot}` : ""}
+${order.delivery_notes ? `📝 Note: ${order.delivery_notes}` : ""}
 ${order.delivery_fee_shown ? `💰 Compenso: €${order.delivery_fee_shown.toFixed(2)}` : ""}
 
 **Accetti questo ordine?**

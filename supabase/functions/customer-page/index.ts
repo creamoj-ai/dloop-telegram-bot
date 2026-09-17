@@ -389,6 +389,7 @@ async function handlePost(token: string, req: Request, supabase: any): Promise<R
       pin: deliveryPin,
       delivery_fee: deliveryFeeShown,
       delivery_fee_breakdown: deliveryFeeBreakdown,
+      delivery_slot: deliverySlot || null,
     }),
     {
       status: 200,

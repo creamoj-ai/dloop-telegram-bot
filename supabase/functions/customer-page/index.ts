@@ -8,6 +8,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.0";
 import { Bot } from "https://esm.sh/grammy@1.30.0";
+import { notifyMerchantOrderReceived } from "../telegram-webhook/services/notification-service.ts";
 
 // Configurazione
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
@@ -243,7 +244,6 @@ async function handlePost(token: string, req: Request, supabase: any): Promise<R
   const dropoffLat = body.dropoff_lat ? parseFloat(body.dropoff_lat.toString()) : null;
   const dropoffLng = body.dropoff_lng ? parseFloat(body.dropoff_lng.toString()) : null;
   const deliveryNotes = body.delivery_notes?.toString().trim() || "";
-  const notes = body.notes?.toString().trim() || "";
 
   // Validazione (stessa logica di prima)
   const errors: string[] = [];
@@ -341,11 +341,6 @@ async function handlePost(token: string, req: Request, supabase: any): Promise<R
     // dropoff_point (geography) NON viene scritto - resta NULL
   };
 
-  // Add notes se presenti
-  if (notes) {
-    updateData.notes = notes;
-  }
-
   const { error: updateError } = await supabase
     .from("orders")
     .update(updateData)
@@ -364,60 +359,18 @@ async function handlePost(token: string, req: Request, supabase: any): Promise<R
 
   console.log(`[customer-page] Ordine ${order.id} completato dal cliente`);
 
-  // Notifica merchant con bottone conferma
-  try {
-    console.log(`[customer-page] Notifica merchant per ordine ${order.id}...`);
-
-    // Recupera telegram_user_id del merchant
-    const { data: dealer } = await supabase
-      .from("dealers")
-      .select("telegram_user_id")
-      .eq("id", order.dealer_contact_id)
-      .maybeSingle();
-
-    if (dealer?.telegram_user_id) {
-      const orderShortId = order.id.slice(0, 8).toUpperCase();
-      const packageInfo = [];
-      if (order.package_size) packageInfo.push(order.package_size);
-      if (order.package_count > 1) packageInfo.push(`${order.package_count} colli`);
-      if (order.is_fragile) packageInfo.push("fragile");
-
-      const message =
-        `🟢 **NUOVO ORDINE DA CLIENTE**\n\n` +
-        `Ordine: #${orderShortId}\n` +
-        `Cliente: ${recipientName}\n` +
-        `Telefono: ${recipientPhone}\n` +
-        `Consegna: ${dropoffAddress}\n` +
-        (deliveryNotes ? `Dettagli: ${deliveryNotes}\n` : '') +
-        `${packageInfo.length > 0 ? `Pacco: ${packageInfo.join(', ')}\n` : ''}` +
-        (() => {
-          const feeKmPart = parseFloat((deliveryFeeShown! - BASE_FEE).toFixed(2));
-          const realKm = parseFloat((feeKmPart / RATE_PER_KM).toFixed(1));
-          return `💰 Consegna: €${BASE_FEE.toFixed(2)} fisso + €${feeKmPart.toFixed(2)} (${realKm} km × €${RATE_PER_KM}) = €${deliveryFeeShown!.toFixed(2)}\n`;
-        })() +
-        `\n**L'ordine è pronto per il ritiro?**`;
-
-      await bot.api.sendMessage(
-        dealer.telegram_user_id,
-        message,
-        {
-          parse_mode: "Markdown",
-          reply_markup: {
-            inline_keyboard: [[
-              { text: "✅ Conferma ordine pronto", callback_data: `confirm_order_${order.id}` }
-            ]]
-          }
-        }
-      );
-
-      console.log(`[customer-page] Merchant notificato per ordine ${order.id}`);
-    } else {
-      console.warn(`[customer-page] Merchant senza telegram_user_id per ordine ${order.id}`);
-    }
-  } catch (notifyError) {
-    console.error("[customer-page] Errore notifica merchant:", notifyError);
-    // Non bloccare la risposta al cliente se notifica merchant fallisce
-  }
+  // Notifica merchant con bottone conferma (usa servizio centralizzato)
+  await notifyMerchantOrderReceived(bot, order.id, {
+    recipientName,
+    recipientPhone,
+    dropoffAddress,
+    deliveryNotes: deliveryNotes || undefined,
+    packageSize: order.package_size,
+    packageCount: order.package_count,
+    isFragile: order.is_fragile,
+    deliveryFeeShown: deliveryFeeShown!,
+    dealerContactId: order.dealer_contact_id,
+  });
 
   // Invia PIN al cliente via WhatsApp (stub per ora)
   await sendPinToCustomer(recipientPhone, deliveryPin, order.id);

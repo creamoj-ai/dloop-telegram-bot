@@ -104,6 +104,86 @@ function formatMerchantMessage(
   }
 }
 
+/**
+ * Notifica merchant quando cliente completa l'ordine via customer-page.
+ * Messaggio dettagliato con nome, telefono, dettagli e bottone conferma.
+ *
+ * @param bot         Grammy Bot instance
+ * @param orderId     UUID ordine
+ * @param orderDetails Dettagli ordine da mostrare
+ */
+export async function notifyMerchantOrderReceived(
+  bot: Bot,
+  orderId: string,
+  orderDetails: {
+    recipientName: string;
+    recipientPhone: string;
+    dropoffAddress: string;
+    deliveryNotes?: string;
+    packageSize?: string;
+    packageCount?: number;
+    isFragile?: boolean;
+    deliveryFeeShown: number;
+    dealerContactId: string;
+  }
+): Promise<void> {
+  if (Deno.env.get("MERCHANT_NOTIFY_ENABLED") === "false") return;
+
+  const supabase = getSupabaseClient();
+
+  // Recupera telegram_user_id del merchant
+  const { data: dealer } = await supabase
+    .from(CONSTANTS.TABLE_MERCHANTS)
+    .select("telegram_user_id")
+    .eq("id", orderDetails.dealerContactId)
+    .maybeSingle();
+
+  if (!dealer?.telegram_user_id) {
+    console.warn(`[notification] Merchant senza telegram_user_id per ordine ${orderId}`);
+    return;
+  }
+
+  const orderShortId = orderId.slice(0, 8).toUpperCase();
+  const packageInfo: string[] = [];
+  if (orderDetails.packageSize) packageInfo.push(orderDetails.packageSize);
+  if (orderDetails.packageCount && orderDetails.packageCount > 1) {
+    packageInfo.push(`${orderDetails.packageCount} colli`);
+  }
+  if (orderDetails.isFragile) packageInfo.push("fragile");
+
+  const feeKmPart = parseFloat((orderDetails.deliveryFeeShown - BASE_FEE).toFixed(2));
+  const realKm = parseFloat((feeKmPart / RATE_PER_KM).toFixed(1));
+
+  const message =
+    `🟢 **NUOVO ORDINE DA CLIENTE**\n\n` +
+    `Ordine: #${orderShortId}\n` +
+    `Cliente: ${orderDetails.recipientName}\n` +
+    `Telefono: ${orderDetails.recipientPhone}\n` +
+    `Consegna: ${orderDetails.dropoffAddress}\n` +
+    (orderDetails.deliveryNotes ? `Dettagli: ${orderDetails.deliveryNotes}\n` : '') +
+    (packageInfo.length > 0 ? `Pacco: ${packageInfo.join(', ')}\n` : '') +
+    `💰 Consegna: €${BASE_FEE.toFixed(2)} fisso + €${feeKmPart.toFixed(2)} (${realKm} km × €${RATE_PER_KM}) = €${orderDetails.deliveryFeeShown.toFixed(2)}\n` +
+    `\n**L'ordine è pronto per il ritiro?**`;
+
+  try {
+    await bot.api.sendMessage(
+      dealer.telegram_user_id,
+      message,
+      {
+        parse_mode: "Markdown",
+        reply_markup: {
+          inline_keyboard: [[
+            { text: "✅ Conferma ordine pronto", callback_data: `confirm_order_${orderId}` }
+          ]]
+        }
+      }
+    );
+    console.log(`[notification] Merchant notificato per ordine ricevuto ${orderId}`);
+  } catch (err) {
+    console.error(`[notification] Errore notifica merchant order received:`, err);
+  }
+}
+
 // ─── CLIENTE — WHATSAPP CLOUD API (stub) ──────────────────────────────────
 
 /**

@@ -162,6 +162,7 @@ async function processSessionStep(
         .from("orders")
         .update({
           status: OrderStatus.COMPLETED,
+          dispatch_status: "dispatching", // Mark as processed to prevent cron from re-processing
           delivery_payment_confirmed: true,
           delivery_paid_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),

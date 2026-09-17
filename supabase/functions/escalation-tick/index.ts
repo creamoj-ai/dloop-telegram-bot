@@ -156,6 +156,7 @@ async function cancelTimedOutOrders() {
     .select("id, dealer_contact_id, broadcast_started_at, dispatch_status, status")
     .eq("dispatch_status", "pending")
     .neq("status", "cancelled")
+    .neq("status", "completed")
     .lt("broadcast_started_at", fiveMinutesAgoISO);
 
   console.log(`[escalation-tick] timeout check trovati=${orders?.length || 0} ordini`);

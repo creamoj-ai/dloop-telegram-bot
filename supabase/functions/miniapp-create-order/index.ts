@@ -45,6 +45,8 @@ async function createDeliveryOrder(orderDraft: any): Promise<string> {
     package_size: orderDraft.package_size || null,
     package_count: orderDraft.package_count || 1,
     is_fragile: orderDraft.is_fragile || false,
+    delivery_slot: orderDraft.time_window || null, // Fascia oraria scelta
+    delivery_notes: orderDraft.notes || null, // Note consegna
     created_at: new Date().toISOString(),
   });
 
@@ -78,7 +80,9 @@ async function notifyMerchant(
   orderId: string,
   recipientName: string,
   deliveryAddress: string,
-  packageSize: string | null
+  packageSize: string | null,
+  timeWindow: string | null,
+  notes: string | null
 ) {
   try {
     const trackingUrl = `https://dloop.it/t/${orderId}`;
@@ -88,6 +92,8 @@ ID: #${orderId.slice(0, 8).toUpperCase()}
 Destinatario: ${recipientName}
 Consegna: ${deliveryAddress}
 ${packageSize ? `Taglia: ${packageSize}` : ""}
+${timeWindow ? `⏰ Fascia: ${timeWindow}` : ""}
+${notes ? `📝 Note: ${notes}` : ""}
 
 📍 Traccia: ${trackingUrl}`;
 
@@ -226,6 +232,8 @@ serve(async (req: Request) => {
       package_size: packageSize || null,
       package_count: packageCount || 1,
       is_fragile: isFragile || false,
+      time_window: timeWindow || null, // Fascia oraria
+      notes: notes || null, // Note consegna
     };
 
     let orderId: string;
@@ -269,7 +277,9 @@ serve(async (req: Request) => {
       orderId,
       recipientName,
       deliveryAddress,
-      packageSize
+      packageSize,
+      timeWindow,
+      notes
     );
 
     // 7. Response al frontend

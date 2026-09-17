@@ -124,6 +124,9 @@ serve(async (req: Request) => {
     // Cancel timed-out orders first
     await cancelTimedOutOrders();
 
+    // Trigger scheduled broadcasts (when scheduled_broadcast_at <= now)
+    await triggerScheduledBroadcasts();
+
     await escalatePendingOrders();
 
     return new Response(JSON.stringify({ success: true }), {
@@ -138,6 +141,68 @@ serve(async (req: Request) => {
     });
   }
 });
+
+/**
+ * Triggera broadcast schedulato per ordini con scheduled_broadcast_at <= now().
+ * Setta broadcast_started_at e chiama dispatch-order Edge Function.
+ */
+async function triggerScheduledBroadcasts() {
+  const now = new Date();
+  const nowISO = now.toISOString();
+
+  console.log(`[escalation-tick] Checking scheduled broadcasts at ${nowISO}...`);
+
+  // Query ordini con scheduled_broadcast_at <= now e broadcast_started_at non iniziato
+  const { data: orders, error } = await supabase
+    .from("orders")
+    .select("id")
+    .lte("scheduled_broadcast_at", nowISO)
+    .is("broadcast_started_at", null)
+    .eq("status", "pending");
+
+  if (error) {
+    console.error("[escalation-tick] Error fetching scheduled broadcasts:", error);
+    return;
+  }
+
+  if (!orders || orders.length === 0) {
+    console.log("[escalation-tick] No scheduled broadcasts to trigger");
+    return;
+  }
+
+  console.log(`[escalation-tick] Found ${orders.length} scheduled broadcasts to trigger`);
+
+  for (const order of orders) {
+    try {
+      // Mark broadcast start time
+      await supabase
+        .from("orders")
+        .update({ broadcast_started_at: new Date().toISOString() })
+        .eq("id", order.id);
+
+      // Call dispatch-order Edge Function
+      const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
+      const dispatchUrl = `${supabaseUrl}/functions/v1/dispatch-order`;
+      const response = await fetch(dispatchUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Admin-Key": Deno.env.get("WOZ_ADMIN_KEY") || "",
+        },
+        body: JSON.stringify({ order_id: order.id }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error(`[escalation-tick] Error dispatching scheduled order ${order.id}:`, errorText);
+      } else {
+        console.log(`[escalation-tick] Scheduled broadcast triggered for order ${order.id}`);
+      }
+    } catch (err) {
+      console.error(`[escalation-tick] Error processing scheduled order ${order.id}:`, err);
+    }
+  }
+}
 
 /**
  * Annulla ordini in broadcasting da più di 5 minuti senza rider accettato.

@@ -120,6 +120,7 @@ export async function notifyMerchantOrderReceived(
     recipientPhone: string;
     dropoffAddress: string;
     deliveryNotes?: string;
+    deliverySlot?: string;
     packageSize?: string;
     packageCount?: number;
     isFragile?: boolean;
@@ -161,6 +162,7 @@ export async function notifyMerchantOrderReceived(
     `Telefono: ${orderDetails.recipientPhone}\n` +
     `Consegna: ${orderDetails.dropoffAddress}\n` +
     (orderDetails.deliveryNotes ? `Dettagli: ${orderDetails.deliveryNotes}\n` : '') +
+    (orderDetails.deliverySlot ? `⏰ Fascia oraria: ${orderDetails.deliverySlot}\n` : '') +
     (packageInfo.length > 0 ? `Pacco: ${packageInfo.join(', ')}\n` : '') +
     `💰 Consegna: €${BASE_FEE.toFixed(2)} fisso + €${feeKmPart.toFixed(2)} (${realKm} km × €${RATE_PER_KM}) = €${orderDetails.deliveryFeeShown.toFixed(2)}\n` +
     `\n**L'ordine è pronto per il ritiro?**`;

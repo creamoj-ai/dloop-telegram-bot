@@ -244,6 +244,7 @@ async function handlePost(token: string, req: Request, supabase: any): Promise<R
   const dropoffLat = body.dropoff_lat ? parseFloat(body.dropoff_lat.toString()) : null;
   const dropoffLng = body.dropoff_lng ? parseFloat(body.dropoff_lng.toString()) : null;
   const deliveryNotes = body.delivery_notes?.toString().trim() || "";
+  const timeWindow = body.time_window?.toString().trim() || ""; // Fascia oraria scelta
 
   // Validazione (stessa logica di prima)
   const errors: string[] = [];
@@ -331,6 +332,7 @@ async function handlePost(token: string, req: Request, supabase: any): Promise<R
     dropoff_lat: dropoffLat, // Coordinate Geoapify
     dropoff_lng: dropoffLng,
     delivery_notes: deliveryNotes, // Dettagli consegna separati
+    delivery_slot: timeWindow || null, // Fascia oraria scelta dal cliente
     customer_name: recipientName,
     customer_phone: recipientPhone,
     status: "pending", // Rimane pending, escalation-tick gestirà il broadcast
@@ -365,6 +367,7 @@ async function handlePost(token: string, req: Request, supabase: any): Promise<R
     recipientPhone,
     dropoffAddress,
     deliveryNotes: deliveryNotes || undefined,
+    deliverySlot: timeWindow || undefined,
     packageSize: order.package_size,
     packageCount: order.package_count,
     isFragile: order.is_fragile,

@@ -4,6 +4,7 @@
 // Scala broadcast tier per ordini PENDING: tier 0→1→2→3.
 // Chiamato da pg_cron job `dloop-escalation-tick`.
 // ============================================================================
+// v2: Fixed escalation for expired delivery slots, improved logging
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.0";

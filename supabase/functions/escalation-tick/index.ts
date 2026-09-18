@@ -75,6 +75,66 @@ function getCurrentDispatchBlock(
   };
 }
 
+/**
+ * Parse delivery_slot string (e.g. "19-21" or "19:00-21:00")
+ * Returns { startH, endH } or null if invalid format
+ */
+function parseDeliverySlot(slot: string): { startH: number; endH: number } | null {
+  if (!slot) return null;
+  const parts = slot.split('-');
+  if (parts.length !== 2) return null;
+
+  const startPart = parts[0].trim();
+  const endPart = parts[1].trim();
+
+  const startMatch = startPart.match(/(\d{1,2})/);
+  const endMatch = endPart.match(/(\d{1,2})/);
+
+  if (!startMatch || !endMatch) return null;
+
+  const startH = parseInt(startMatch[1], 10);
+  const endH = parseInt(endMatch[1], 10);
+
+  if (startH < 0 || startH > 23 || endH < 0 || endH > 23) return null;
+
+  return { startH, endH };
+}
+
+/**
+ * Calculate timing thresholds for delivery slot
+ * Returns timestamps for: escalation (T-30min), cancellation (T+5min)
+ * Times are calculated in Europe/Rome timezone
+ */
+function calculateSlotTimestamps(
+  slotStr: string,
+  now: Date
+): { escalationTime: Date; cancellationTime: Date } | null {
+  const slot = parseDeliverySlot(slotStr);
+  if (!slot) return null;
+
+  const dateStr = italyDateOf(now);
+
+  // Start and end times of delivery slot (in UTC, adjusted for Rome tz)
+  const slotStartUtc = italyHourToUtc(dateStr, slot.startH);
+  const slotEndUtc = italyHourToUtc(dateStr, slot.endH);
+
+  // If slot is in the past, use tomorrow's slot
+  if (slotEndUtc <= now) {
+    const tomorrow = new Date(now);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const tomorrowStr = italyDateOf(tomorrow);
+    return {
+      escalationTime: new Date(italyHourToUtc(tomorrowStr, slot.startH).getTime() - 30 * 60_000),
+      cancellationTime: new Date(italyHourToUtc(tomorrowStr, slot.startH).getTime() + 5 * 60_000),
+    };
+  }
+
+  return {
+    escalationTime: new Date(slotStartUtc.getTime() - 30 * 60_000),
+    cancellationTime: new Date(slotStartUtc.getTime() + 5 * 60_000),
+  };
+}
+
 async function filterRidersByCapacity(riders: any[]): Promise<any[]> {
   if (riders.length === 0) return [];
   const block = getCurrentDispatchBlock(new Date());
@@ -124,6 +184,9 @@ serve(async (req: Request) => {
     // Cancel timed-out orders first
     await cancelTimedOutOrders();
 
+    // Trigger scheduled broadcasts (when scheduled_broadcast_at <= now)
+    await triggerScheduledBroadcasts();
+
     await escalatePendingOrders();
 
     return new Response(JSON.stringify({ success: true }), {
@@ -140,98 +203,196 @@ serve(async (req: Request) => {
 });
 
 /**
- * Annulla ordini in broadcasting da più di 5 minuti senza rider accettato.
- * Notifica il merchant via bot.
+ * Triggera broadcast schedulato per ordini con scheduled_broadcast_at <= now().
+ * Setta broadcast_started_at e chiama dispatch-order Edge Function.
  */
-async function cancelTimedOutOrders() {
+async function triggerScheduledBroadcasts() {
   const now = new Date();
-  const fiveMinutesAgo = new Date(now.getTime() - 5 * 60 * 1000);
-  const fiveMinutesAgoISO = fiveMinutesAgo.toISOString();
+  const nowISO = now.toISOString();
 
-  console.log(`[escalation-tick] timeout check fiveMinutesAgo=${fiveMinutesAgoISO}`);
+  console.log(`[escalation-tick] Checking scheduled broadcasts at ${nowISO}...`);
 
-  // Query ordini con timeout
+  // Query ordini con scheduled_broadcast_at <= now e broadcast_started_at non iniziato
   const { data: orders, error } = await supabase
     .from("orders")
-    .select("id, dealer_contact_id, broadcast_started_at, dispatch_status, status")
-    .eq("dispatch_status", "pending")
-    .neq("status", "cancelled")
-    .lt("broadcast_started_at", fiveMinutesAgoISO);
-
-  console.log(`[escalation-tick] timeout check trovati=${orders?.length || 0} ordini`);
+    .select("id")
+    .lte("scheduled_broadcast_at", nowISO)
+    .is("broadcast_started_at", null)
+    .eq("status", "pending");
 
   if (error) {
-    console.error("[escalation-tick] Error fetching timed-out orders:", error);
+    console.error("[escalation-tick] Error fetching scheduled broadcasts:", error);
     return;
   }
 
   if (!orders || orders.length === 0) {
-    console.log("[escalation-tick] No timed-out orders to cancel");
+    console.log("[escalation-tick] No scheduled broadcasts to trigger");
     return;
   }
 
-  // Log ordini trovati
-  console.log(`[escalation-tick] Orders to cancel: ${JSON.stringify(orders.map(o => ({
-    id: o.id,
-    broadcast_started_at: o.broadcast_started_at,
-    dispatch_status: o.dispatch_status,
-    status: o.status
-  })))}`);
+  console.log(`[escalation-tick] Found ${orders.length} scheduled broadcasts to trigger`);
 
-  // Cancella ordini uno per uno e notifica merchant
   for (const order of orders) {
-    const { error: updateError } = await supabase
-      .from("orders")
-      .update({ status: "cancelled", dispatch_status: "pending" })
-      .eq("id", order.id);
+    try {
+      // Mark broadcast start time
+      await supabase
+        .from("orders")
+        .update({ broadcast_started_at: new Date().toISOString() })
+        .eq("id", order.id);
 
-    if (updateError) {
-      console.error(`[escalation-tick] Error cancelling order ${order.id}:`, updateError);
-      continue;
-    }
-
-    console.log(`[escalation-tick] Ordine ${order.id} annullato per timeout dispatch (5 min)`);
-
-    // Notifica merchant
-    if (!order.dealer_contact_id) continue;
-
-    const { data: dealer } = await supabase
-      .from("dealers")
-      .select("telegram_user_id")
-      .eq("id", order.dealer_contact_id)
-      .maybeSingle();
-
-    const orderShortId = order.id.slice(0, 8).toUpperCase();
-    if (dealer?.telegram_user_id && CONFIG.telegram.token) {
-      await fetch(`https://api.telegram.org/bot${CONFIG.telegram.token}/sendMessage`, {
+      // Call dispatch-order Edge Function
+      const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
+      const dispatchUrl = `${supabaseUrl}/functions/v1/dispatch-order`;
+      const response = await fetch(dispatchUrl, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          chat_id: dealer.telegram_user_id,
-          text: `❌ Ordine #${orderShortId} annullato — nessun rider disponibile entro 5 minuti.`,
-        }),
+        headers: {
+          "Content-Type": "application/json",
+          "X-Admin-Key": Deno.env.get("WOZ_ADMIN_KEY") || "",
+        },
+        body: JSON.stringify({ order_id: order.id }),
       });
-      console.log(`[escalation-tick] Merchant notificato per ordine ${order.id}`);
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error(`[escalation-tick] Error dispatching scheduled order ${order.id}:`, errorText);
+      } else {
+        console.log(`[escalation-tick] Scheduled broadcast triggered for order ${order.id}`);
+      }
+    } catch (err) {
+      console.error(`[escalation-tick] Error processing scheduled order ${order.id}:`, err);
     }
   }
 }
 
 /**
- * Scala tier per ordini PENDING con broadcast_started_at:
- * - tier 0 + elapsed >= 60s → tier 1
- * - tier 1 + elapsed >= 120s → tier 2
- * - tier 2 + elapsed >= 180s → tier 3
+ * Annulla ordini scaduti senza rider accettato.
+ * - Con delivery_slot: annulla a T+5min dalla fascia oraria
+ * - Senza delivery_slot (fallback): annulla dopo 30min da broadcast_started_at
+ */
+async function cancelTimedOutOrders() {
+  const now = new Date();
+  const nowISO = now.toISOString();
+
+  console.log(`[escalation-tick] Checking orders for cancellation at ${nowISO}...`);
+
+  // Query ordini con broadcast_started_at (non ancora annullati/completati)
+  const { data: orders, error } = await supabase
+    .from("orders")
+    .select("id, dealer_contact_id, broadcast_started_at, dispatch_status, status, delivery_slot")
+    .eq("dispatch_status", "pending")
+    .neq("status", "cancelled")
+    .neq("status", "completed")
+    .not("broadcast_started_at", "is", null);
+
+  if (error) {
+    console.error("[escalation-tick] Error fetching orders for cancellation:", error);
+    return;
+  }
+
+  if (!orders || orders.length === 0) {
+    console.log("[escalation-tick] No orders to check for cancellation");
+    return;
+  }
+
+  const ordersToCancel = [];
+
+  for (const order of orders) {
+    let shouldCancel = false;
+    let cancelReason = "";
+
+    if (order.delivery_slot) {
+      // Cancella a T+5min dalla fascia oraria
+      const slotTimes = calculateSlotTimestamps(order.delivery_slot, now);
+      if (slotTimes) {
+        const cancellationTime = slotTimes.cancellationTime;
+        if (now >= cancellationTime) {
+          shouldCancel = true;
+          cancelReason = `fascia ${order.delivery_slot}: scaduto a ${cancellationTime.toISOString()}`;
+        }
+      }
+    } else {
+      // Fallback: cancella dopo 30min da broadcast_started_at
+      const broadcastStart = new Date(order.broadcast_started_at!);
+      const thirtyMinutesLater = new Date(broadcastStart.getTime() + 30 * 60_000);
+      if (now >= thirtyMinutesLater) {
+        shouldCancel = true;
+        cancelReason = `fallback: 30min da broadcast (${thirtyMinutesLater.toISOString()})`;
+      }
+    }
+
+    if (shouldCancel) {
+      ordersToCancel.push({ ...order, cancelReason });
+    }
+  }
+
+  if (ordersToCancel.length === 0) {
+    console.log("[escalation-tick] No orders to cancel");
+    return;
+  }
+
+  console.log(`[escalation-tick] Found ${ordersToCancel.length} orders to cancel`);
+
+  // Cancella ordini uno per uno e notifica merchant
+  for (const order of ordersToCancel) {
+    try {
+      const { error: updateError } = await supabase
+        .from("orders")
+        .update({ status: "cancelled", dispatch_status: "dispatching" })
+        .eq("id", order.id);
+
+      if (updateError) {
+        console.error(`[escalation-tick] Error cancelling order ${order.id}:`, updateError);
+        continue;
+      }
+
+      console.log(`[escalation-tick] Ordine ${order.id} annullato (${order.cancelReason})`);
+
+      // Notifica merchant
+      if (!order.dealer_contact_id) continue;
+
+      const { data: dealer } = await supabase
+        .from("dealers")
+        .select("telegram_user_id")
+        .eq("id", order.dealer_contact_id)
+        .maybeSingle();
+
+      const orderShortId = order.id.slice(0, 8).toUpperCase();
+      if (dealer?.telegram_user_id && CONFIG.telegram.token) {
+        await fetch(`https://api.telegram.org/bot${CONFIG.telegram.token}/sendMessage`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            chat_id: dealer.telegram_user_id,
+            text: `❌ Ordine #${orderShortId} annullato — nessun rider disponibile.`,
+          }),
+        });
+        console.log(`[escalation-tick] Merchant notificato per ordine ${order.id}`);
+      }
+    } catch (err) {
+      console.error(`[escalation-tick] Error processing cancellation for ${order.id}:`, err);
+    }
+  }
+}
+
+/**
+ * Escalazione ordini PENDING basata su delivery_slot:
+ * - Con delivery_slot: escalation a T-30min dalla fascia oraria (tier 0→1)
+ * - Senza delivery_slot: escalation a 60s da broadcast_started_at (tier 0→1, fallback)
+ * Una sola escalation a tier 1, poi cancellazione attende il timeout.
  */
 async function escalatePendingOrders() {
   const now = new Date();
+  const nowISO = now.toISOString();
 
-  // Query ordini PENDING con broadcast_started_at e tier < 3
+  console.log(`[escalation-tick] Checking orders for escalation at ${nowISO}...`);
+
+  // Query ordini PENDING con broadcast_started_at e tier < 1 (non ancora escalati)
   const { data: orders, error } = await supabase
     .from("orders")
     .select("*, dealers!inner(location)")
     .eq("status", "pending")
     .not("broadcast_started_at", "is", null)
-    .lt("broadcast_tier", 3);
+    .lt("broadcast_tier", 1);
 
   if (error) {
     console.error("[escalation-tick] Error fetching orders:", error);
@@ -243,51 +404,78 @@ async function escalatePendingOrders() {
     return;
   }
 
+  const ordersToEscalate = [];
+
   for (const order of orders) {
-    const startedAt = new Date(order.broadcast_started_at!);
-    const elapsedSec = (now.getTime() - startedAt.getTime()) / 1000;
+    let shouldEscalate = false;
+    let escalationReason = "";
 
-    const currentTier = order.broadcast_tier || 0;
-    let newTier = currentTier;
-
-    // Escalation thresholds
-    if (currentTier === 0 && elapsedSec >= 60) newTier = 1;
-    else if (currentTier === 1 && elapsedSec >= 120) newTier = 2;
-    else if (currentTier === 2 && elapsedSec >= 180) newTier = 3;
-
-    if (newTier === currentTier) continue; // Nessuna escalation
-
-    console.log(`[escalation-tick] Escalation ordine ${order.id}: tier ${currentTier} → ${newTier}`);
-
-    // Update tier
-    await supabase.from("orders").update({ broadcast_tier: newTier }).eq("id", order.id);
-
-    // Notifica nuovi rider
-    const merchantLat = order.dealers.location?.latitude;
-    const merchantLon = order.dealers.location?.longitude;
-
-    if (!merchantLat || !merchantLon) {
-      console.warn(`[escalation-tick] Merchant location mancante per ordine ${order.id}`);
-      continue;
-    }
-
-    const radius = newTier === 3 ? CONFIG.broadcast.extendedRadiusKm : CONFIG.broadcast.radiusKm;
-    const allRiders = await getRidersByTier(newTier, merchantLat, merchantLon, radius);
-    const riders = await filterRidersByCapacity(allRiders);
-
-    if (riders.length === 0) {
-      console.warn(`[escalation-tick] Tier ${newTier} nessun rider disponibile per ${order.id}`);
-
-      // Tier 3: alert admin
-      if (newTier === 3) {
-        await alertAdmin(order.id);
+    if (order.delivery_slot) {
+      // Escalation a T-30min dalla fascia oraria
+      const slotTimes = calculateSlotTimestamps(order.delivery_slot, now);
+      if (slotTimes) {
+        const escalationTime = slotTimes.escalationTime;
+        if (now >= escalationTime) {
+          shouldEscalate = true;
+          escalationReason = `fascia ${order.delivery_slot}: T-30min (${escalationTime.toISOString()})`;
+        }
       }
-      continue;
+    } else {
+      // Fallback: escalation dopo 60s da broadcast_started_at
+      const broadcastStart = new Date(order.broadcast_started_at!);
+      const sixtySecondsLater = new Date(broadcastStart.getTime() + 60_000);
+      if (now >= sixtySecondsLater) {
+        shouldEscalate = true;
+        escalationReason = `fallback: 60s da broadcast (${sixtySecondsLater.toISOString()})`;
+      }
     }
 
-    // Notifica riders
-    await notifyRiders(order.id, order, riders);
-    console.log(`[escalation-tick] Tier ${newTier}: ${riders.length} rider notificati per ${order.id}`);
+    if (shouldEscalate) {
+      ordersToEscalate.push({ ...order, escalationReason });
+    }
+  }
+
+  if (ordersToEscalate.length === 0) {
+    console.log("[escalation-tick] No orders ready for escalation");
+    return;
+  }
+
+  console.log(`[escalation-tick] Found ${ordersToEscalate.length} orders to escalate`);
+
+  for (const order of ordersToEscalate) {
+    try {
+      const currentTier = order.broadcast_tier || 0;
+      const newTier = 1; // Sempre scala a tier 1
+
+      console.log(`[escalation-tick] Escalation ordine ${order.id}: tier ${currentTier} → ${newTier} (${order.escalationReason})`);
+
+      // Update tier
+      await supabase.from("orders").update({ broadcast_tier: newTier }).eq("id", order.id);
+
+      // Notifica nuovi rider
+      const merchantLat = order.dealers.location?.latitude;
+      const merchantLon = order.dealers.location?.longitude;
+
+      if (!merchantLat || !merchantLon) {
+        console.warn(`[escalation-tick] Merchant location mancante per ordine ${order.id}`);
+        continue;
+      }
+
+      const radius = CONFIG.broadcast.radiusKm; // Tier 1: usa raggio standard
+      const allRiders = await getRidersByTier(newTier, merchantLat, merchantLon, radius);
+      const riders = await filterRidersByCapacity(allRiders);
+
+      if (riders.length === 0) {
+        console.warn(`[escalation-tick] Tier ${newTier} nessun rider disponibile per ${order.id}`);
+        continue;
+      }
+
+      // Notifica riders
+      await notifyRiders(order.id, order, riders);
+      console.log(`[escalation-tick] Tier ${newTier}: ${riders.length} rider notificati per ${order.id}`);
+    } catch (err) {
+      console.error(`[escalation-tick] Error escalating order ${order.id}:`, err);
+    }
   }
 }
 

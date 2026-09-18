@@ -413,7 +413,7 @@ async function escalatePendingOrders() {
   // Query ordini PENDING con broadcast_started_at e tier < 1 (non ancora escalati)
   const { data: orders, error } = await supabase
     .from("orders")
-    .select("*, dealers!inner(location)")
+    .select("*, dealers!inner(pickup_lat, pickup_lng)")
     .eq("status", "pending")
     .not("broadcast_started_at", "is", null)
     .lt("broadcast_tier", 1);
@@ -477,8 +477,8 @@ async function escalatePendingOrders() {
       await supabase.from("orders").update({ broadcast_tier: newTier }).eq("id", order.id);
 
       // Notifica nuovi rider
-      const merchantLat = order.dealers.location?.latitude;
-      const merchantLon = order.dealers.location?.longitude;
+      const merchantLat = order.dealers.pickup_lat;
+      const merchantLon = order.dealers.pickup_lng;
 
       if (!merchantLat || !merchantLon) {
         console.warn(`[escalation-tick] Merchant location mancante per ordine ${order.id}`);

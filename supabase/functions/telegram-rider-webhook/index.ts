@@ -300,7 +300,17 @@ bot.callbackQuery(/^confirm_rider_(.+)$/, async (ctx) => {
     await ctx.reply(
       `✅ **Confermato!**\n\n` +
       `Ordine #${orderShortId}\n\n` +
-      `Ti ricordiamo 30 minuti prima del ritiro. Preparati! 🚀`
+      `Ti ricordiamo 30 minuti prima del ritiro. Preparati! 🚀`,
+      {
+        parse_mode: "Markdown",
+        reply_markup: {
+          inline_keyboard: [
+            [
+              { text: "📦 Ho ritirato", callback_data: `pickup_confirmed_${orderId}` },
+            ],
+          ],
+        },
+      }
     );
 
     console.log(`[rider-bot] Rider ${rider.id} confermato per ordine ${orderId}`);

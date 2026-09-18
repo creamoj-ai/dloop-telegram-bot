@@ -155,6 +155,17 @@ export async function notifyMerchantOrderReceived(
   const feeKmPart = parseFloat((orderDetails.deliveryFeeShown - BASE_FEE).toFixed(2));
   const realKm = parseFloat((feeKmPart / RATE_PER_KM).toFixed(1));
 
+  // Calcola T-2h della fascia oraria (Europe/Rome timezone)
+  let broadcastTimeInfo = "";
+  if (orderDetails.deliverySlot) {
+    const slotMatch = orderDetails.deliverySlot.match(/^(\d{1,2})-(\d{1,2})$/);
+    if (slotMatch) {
+      const startHour = parseInt(slotMatch[1], 10);
+      const broadcastHour = Math.max(0, startHour - 2);
+      broadcastTimeInfo = `\n📡 Il broadcast ai rider partirà automaticamente alle **${String(broadcastHour).padStart(2, "0")}:00** (T-2h dalla fascia).`;
+    }
+  }
+
   const message =
     `🟢 **NUOVO ORDINE DA CLIENTE**\n\n` +
     `Ordine: #${orderShortId}\n` +
@@ -164,20 +175,15 @@ export async function notifyMerchantOrderReceived(
     (orderDetails.deliveryNotes ? `Dettagli: ${orderDetails.deliveryNotes}\n` : '') +
     (orderDetails.deliverySlot ? `⏰ Fascia oraria: ${orderDetails.deliverySlot}\n` : '') +
     (packageInfo.length > 0 ? `Pacco: ${packageInfo.join(', ')}\n` : '') +
-    `💰 Consegna: €${BASE_FEE.toFixed(2)} fisso + €${feeKmPart.toFixed(2)} (${realKm} km × €${RATE_PER_KM}) = €${orderDetails.deliveryFeeShown.toFixed(2)}\n` +
-    `\n**L'ordine è pronto per il ritiro?**`;
+    `💰 Consegna: €${BASE_FEE.toFixed(2)} fisso + €${feeKmPart.toFixed(2)} (${realKm} km × €${RATE_PER_KM}) = €${orderDetails.deliveryFeeShown.toFixed(2)}` +
+    broadcastTimeInfo;
 
   try {
     await bot.api.sendMessage(
       dealer.telegram_user_id,
       message,
       {
-        parse_mode: "Markdown",
-        reply_markup: {
-          inline_keyboard: [[
-            { text: "✅ Conferma ordine pronto", callback_data: `confirm_order_${orderId}` }
-          ]]
-        }
+        parse_mode: "Markdown"
       }
     );
     console.log(`[notification] Merchant notificato per ordine ricevuto ${orderId}`);

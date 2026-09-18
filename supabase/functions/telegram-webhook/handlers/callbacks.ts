@@ -41,6 +41,9 @@ export function registerCallbacks(bot: Bot) {
 
   // Rating rider
   bot.callbackQuery(/^rate_rider_(.+)_(\d)$/, handleRateRider);
+
+  // Merchant confirmation (T-30min)
+  bot.callbackQuery(/^merchant_ready_(.+)$/, handleMerchantReady);
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -475,5 +478,72 @@ async function handleRateRider(ctx: Context) {
   } catch (err) {
     console.error("[callbacks] handleRateRider error:", err);
     await ctx.answerCallbackQuery({ text: "Errore registrazione voto", show_alert: true });
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// MERCHANT CONFIRMATION (T-30min)
+// ─────────────────────────────────────────────────────────────────────────
+
+async function handleMerchantReady(ctx: Context) {
+  const orderId = (ctx.match as RegExpMatchArray)[1];
+
+  try {
+    const supabase = getSupabaseClient();
+    const nowISO = new Date().toISOString();
+
+    // 1. Aggiorna ordine: merchant_confirmed_at = now()
+    const { data: order, error: updateError } = await supabase
+      .from(CONSTANTS.TABLE_ORDERS)
+      .update({ merchant_confirmed_at: nowISO })
+      .eq("id", orderId)
+      .select("assigned_rider_id")
+      .maybeSingle();
+
+    if (updateError || !order) {
+      await ctx.answerCallbackQuery({ text: "Errore aggiornamento ordine", show_alert: true });
+      return;
+    }
+
+    await ctx.answerCallbackQuery({ text: "✅ Confermato" });
+    await ctx.editMessageReplyMarkup({ reply_markup: { inline_keyboard: [] } });
+
+    // 2. Se rider assegnato, notifica rider
+    if (order.assigned_rider_id) {
+      const { data: rider, error: riderError } = await supabase
+        .from(CONSTANTS.TABLE_RIDERS)
+        .select("telegram_user_id")
+        .eq("id", order.assigned_rider_id)
+        .maybeSingle();
+
+      if (!riderError && rider?.telegram_user_id) {
+        const TELEGRAM_RIDER_BOT_TOKEN = Deno.env.get("TELEGRAM_RIDER_BOT_TOKEN") || "";
+
+        if (TELEGRAM_RIDER_BOT_TOKEN) {
+          const riderMessage = `🟢 **Merchant conferma:** ordine pronto in anticipo.\n\nPuoi andare a ritirare quando vuoi!`;
+
+          try {
+            await fetch(`https://api.telegram.org/bot${TELEGRAM_RIDER_BOT_TOKEN}/sendMessage`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                chat_id: rider.telegram_user_id,
+                text: riderMessage,
+                parse_mode: "Markdown",
+              }),
+            });
+
+            console.log(`[callbacks] Rider ${order.assigned_rider_id} notificato (merchant ready per ordine ${orderId})`);
+          } catch (err) {
+            console.error(`[callbacks] Error notifying rider for order ${orderId}:`, err);
+          }
+        }
+      }
+    }
+
+    console.log(`[callbacks] Merchant confirmed order ${orderId}`);
+  } catch (err) {
+    console.error("[callbacks] handleMerchantReady error:", err);
+    await ctx.answerCallbackQuery({ text: "Errore conferma ordine", show_alert: true });
   }
 }

@@ -1034,6 +1034,13 @@ L'ordine è pronto?
               chat_id: dealer.telegram_user_id,
               text: merchantMessage,
               parse_mode: "Markdown",
+              reply_markup: {
+                inline_keyboard: [
+                  [
+                    { text: "✅ Sì, sono pronto", callback_data: `merchant_ready_${order.id}` },
+                  ],
+                ],
+              },
             }),
           });
 

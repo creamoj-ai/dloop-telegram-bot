@@ -751,6 +751,9 @@ Rispondi entro 15 minuti, altrimenti verrà offerto ad altri rider.
                   { text: "✅ Confermo", callback_data: `confirm_rider_${order.id}` },
                   { text: "❌ Non posso", callback_data: `cancel_rider_${order.id}` },
                 ],
+                [
+                  { text: "📦 Ho ritirato", callback_data: `pickup_confirmed_${order.id}` },
+                ],
               ],
             },
           }),

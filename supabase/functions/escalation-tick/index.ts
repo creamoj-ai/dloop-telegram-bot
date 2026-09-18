@@ -143,8 +143,10 @@ function calculateSlotTimestamps(
   }
 
   // CASO 3: now è PRIMA della fascia
+  const escalationTime = new Date(slotStartUtc.getTime() - 30 * 60_000);
+  console.log(`[escalation-tick] calculateSlotTimestamps CASO 3: slot="${slotStr}", slotStartUtc="${slotStartUtc.toISOString()}", escalationTime="${escalationTime.toISOString()}", now="${now.toISOString()}"`);
   return {
-    escalationTime: new Date(slotStartUtc.getTime() - 30 * 60_000),
+    escalationTime: escalationTime,
     cancellationTime: new Date(slotStartUtc.getTime() + 5 * 60_000),
   };
 }

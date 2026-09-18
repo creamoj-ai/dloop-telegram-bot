@@ -371,7 +371,6 @@ async function handlePost(token: string, req: Request, supabase: any): Promise<R
 
   // Decidi se broadcast schedulato o immediato
   const scheduledBroadcastAt = calculateScheduledBroadcastAt(deliverySlot || null);
-  const now = new Date();
 
   if (scheduledBroadcastAt && new Date(scheduledBroadcastAt) > now) {
     // Broadcast schedulato nel futuro → NON avviare subito

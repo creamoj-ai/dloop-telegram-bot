@@ -55,11 +55,10 @@ function italyDateOf(d: Date): string {
 }
 
 function italyHourToUtc(dateStr: string, h: number): Date {
-  const t = new Date(`${dateStr}T${String(h).padStart(2, "0")}:00:00Z`);
-  const actual = parseInt(
-    t.toLocaleTimeString("en-GB", { timeZone: ITALY_TZ, hour: "2-digit", hour12: false })
-  );
-  return new Date(t.getTime() - (actual - h) * 3_600_000);
+  // Italia è UTC+2 (CEST). Convertire ora italiana a UTC sottraendo 2 ore.
+  // Esempio: 19:00 Italia → 17:00 UTC (19 - 2 = 17)
+  const utcHour = h - 2;
+  return new Date(`${dateStr}T${String(utcHour).padStart(2, "0")}:00:00Z`);
 }
 
 function getCurrentDispatchBlock(

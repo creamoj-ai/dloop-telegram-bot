@@ -413,7 +413,7 @@ async function escalatePendingOrders() {
   // Query ordini PENDING con broadcast_started_at e tier < 1 (non ancora escalati)
   const { data: orders, error } = await supabase
     .from("orders")
-    .select("*, dealers!inner(pickup_lat, pickup_lng)")
+    .select("*, dealers(pickup_lat, pickup_lng)")
     .eq("status", "pending")
     .not("broadcast_started_at", "is", null)
     .lt("broadcast_tier", 1);

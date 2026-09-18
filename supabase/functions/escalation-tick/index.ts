@@ -329,15 +329,19 @@ async function cancelTimedOutOrders() {
       const slotTimes = calculateSlotTimestamps(order.delivery_slot, now);
       if (slotTimes) {
         const cancellationTime = slotTimes.cancellationTime;
+        console.log(`[escalation-tick] Order ${order.id.slice(0, 8)}: delivery_slot="${order.delivery_slot}", cancellationTime="${cancellationTime.toISOString()}", now="${nowISO}", shouldCancel=${now >= cancellationTime}`);
         if (now >= cancellationTime) {
           shouldCancel = true;
           cancelReason = `fascia ${order.delivery_slot}: scaduto a ${cancellationTime.toISOString()}`;
         }
+      } else {
+        console.log(`[escalation-tick] Order ${order.id.slice(0, 8)}: delivery_slot="${order.delivery_slot}", calculateSlotTimestamps returned null`);
       }
     } else {
       // Fallback: cancella dopo 30min da broadcast_started_at
       const broadcastStart = new Date(order.broadcast_started_at!);
       const thirtyMinutesLater = new Date(broadcastStart.getTime() + 30 * 60_000);
+      console.log(`[escalation-tick] Order ${order.id.slice(0, 8)}: no delivery_slot, broadcast_started_at="${order.broadcast_started_at}", thirtyMinutesLater="${thirtyMinutesLater.toISOString()}", now="${nowISO}", shouldCancel=${now >= thirtyMinutesLater}`);
       if (now >= thirtyMinutesLater) {
         shouldCancel = true;
         cancelReason = `fallback: 30min da broadcast (${thirtyMinutesLater.toISOString()})`;

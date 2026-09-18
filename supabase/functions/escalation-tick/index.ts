@@ -135,9 +135,10 @@ function calculateSlotTimestamps(
   }
 
   // CASO 2: now è DENTRO la fascia (slotStart <= now < slotEnd)
+  // Se fascia è già iniziata, escalate immediatamente (non aspettare 15min)
   if (now >= slotStartUtc && now < slotEndUtc) {
     return {
-      escalationTime: new Date(now.getTime() + 15 * 60_000),
+      escalationTime: now,
       cancellationTime: slotEndUtc,
     };
   }

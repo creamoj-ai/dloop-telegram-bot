@@ -193,6 +193,9 @@ serve(async (req: Request) => {
     // Handle timed-out confirmations (15min timeout)
     await handleTimedOutConfirmations();
 
+    // Send T-30min reminders to confirmed riders
+    await sendThirtyMinuteReminders();
+
     await escalatePendingOrders();
 
     return new Response(JSON.stringify({ success: true }), {
@@ -870,6 +873,176 @@ Ti avvertiremo quando un nuovo rider accetterà.
 
     } catch (err) {
       console.error(`[escalation-tick] Error processing timed-out confirmation for ${order.id}:`, err);
+    }
+  }
+}
+
+/**
+ * Reminder T-30min per ordini confermati dal rider (status='accepted' + rider_confirmed_at NOT NULL).
+ * Invia notifiche a rider e merchant.
+ */
+async function sendThirtyMinuteReminders() {
+  const now = new Date();
+  const nowISO = now.toISOString();
+
+  console.log(`[escalation-tick] Checking 30-minute reminders at ${nowISO}...`);
+
+  // Query ordini con status='accepted' + rider_confirmed_at NOT NULL + thirty_min_reminder_sent_at IS NULL
+  const { data: orders, error } = await supabase
+    .from("orders")
+    .select("id, assigned_rider_id, dealer_contact_id, delivery_slot, rider_confirmed_at, customer_name, restaurant_name, dropoff_address")
+    .eq("status", "accepted")
+    .not("rider_confirmed_at", "is", null)
+    .is("thirty_min_reminder_sent_at", null);
+
+  if (error) {
+    console.error("[escalation-tick] Error fetching 30-min reminders:", error);
+    return;
+  }
+
+  if (!orders || orders.length === 0) {
+    console.log("[escalation-tick] No 30-minute reminders to send");
+    return;
+  }
+
+  console.log(`[escalation-tick] Found ${orders.length} orders for 30-minute reminders`);
+
+  for (const order of orders) {
+    try {
+      // Calcola T-30min dalla delivery_slot
+      let shouldSendReminder = false;
+      let reminderReason = "";
+
+      if (order.delivery_slot) {
+        const slot = parseDeliverySlot(order.delivery_slot);
+        if (slot) {
+          const dateStr = italyDateOf(now);
+          const slotStartUtc = italyHourToUtc(dateStr, slot.startH);
+
+          // Se fascia è nel passato, usa domani
+          let reminderTime = slotStartUtc;
+          if (slotStartUtc <= now) {
+            const tomorrow = new Date(now);
+            tomorrow.setDate(tomorrow.getDate() + 1);
+            const tomorrowStr = italyDateOf(tomorrow);
+            reminderTime = italyHourToUtc(tomorrowStr, slot.startH);
+          }
+
+          // T-30min prima della fascia
+          const thirtyMinBefore = new Date(reminderTime.getTime() - 30 * 60_000);
+
+          if (now >= thirtyMinBefore) {
+            shouldSendReminder = true;
+            reminderReason = `fascia ${order.delivery_slot}: T-30min (${thirtyMinBefore.toISOString()})`;
+          }
+        }
+      }
+
+      if (!shouldSendReminder) continue;
+
+      // Fetch rider per telegram_user_id
+      const { data: rider, error: riderError } = await supabase
+        .from("riders")
+        .select("id, name, telegram_user_id")
+        .eq("id", order.assigned_rider_id)
+        .maybeSingle();
+
+      if (riderError || !rider) {
+        console.warn(`[escalation-tick] Rider non trovato per ordine ${order.id}`);
+        continue;
+      }
+
+      if (!rider.telegram_user_id) {
+        console.warn(`[escalation-tick] Rider ${rider.id} senza telegram_user_id`);
+        continue;
+      }
+
+      const orderShortId = order.id.slice(0, 8).toUpperCase();
+      const TELEGRAM_RIDER_BOT_TOKEN = Deno.env.get("TELEGRAM_RIDER_BOT_TOKEN") || "";
+
+      // 1. Notifica RIDER
+      if (TELEGRAM_RIDER_BOT_TOKEN) {
+        const riderMessage = `
+🔔 **Tra 30 minuti devi ritirare l'ordine!**
+
+Ordine: #${orderShortId}
+🏪 ${order.restaurant_name || "Esercente"}
+📍 Consegna: ${order.dropoff_address || "N/D"}
+👤 Cliente: ${order.customer_name || "N/D"}
+
+Preparati! ⏱️
+        `.trim();
+
+        try {
+          const riderUrl = `https://api.telegram.org/bot${TELEGRAM_RIDER_BOT_TOKEN}/sendMessage`;
+          const riderResponse = await fetch(riderUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              chat_id: rider.telegram_user_id,
+              text: riderMessage,
+              parse_mode: "Markdown",
+            }),
+          });
+
+          if (!riderResponse.ok) {
+            const errorText = await riderResponse.text();
+            console.error(`[escalation-tick] Error sending 30min reminder to rider ${rider.id}:`, errorText);
+          }
+        } catch (err) {
+          console.error(`[escalation-tick] Error notifying rider ${rider.id}:`, err);
+        }
+      }
+
+      // 2. Notifica MERCHANT
+      const { data: dealer } = await supabase
+        .from("dealers")
+        .select("telegram_user_id")
+        .eq("id", order.dealer_contact_id)
+        .maybeSingle();
+
+      if (dealer?.telegram_user_id && CONFIG.telegram.token) {
+        const merchantMessage = `
+⚠️ **${rider.name}** arriva tra **30 minuti**.
+
+Ordine: #${orderShortId}
+📍 ${order.restaurant_name || "Esercente"}
+
+L'ordine è pronto?
+        `.trim();
+
+        try {
+          await fetch(`https://api.telegram.org/bot${CONFIG.telegram.token}/sendMessage`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              chat_id: dealer.telegram_user_id,
+              text: merchantMessage,
+              parse_mode: "Markdown",
+            }),
+          });
+
+          console.log(`[escalation-tick] Merchant notificato (30min reminder) per ordine ${order.id}`);
+        } catch (err) {
+          console.error(`[escalation-tick] Error notifying merchant for ${order.id}:`, err);
+        }
+      }
+
+      // 3. Aggiorna ordine: setta thirty_min_reminder_sent_at
+      const { error: updateError } = await supabase
+        .from("orders")
+        .update({ thirty_min_reminder_sent_at: nowISO })
+        .eq("id", order.id);
+
+      if (updateError) {
+        console.error(`[escalation-tick] Error updating order ${order.id}:`, updateError);
+        continue;
+      }
+
+      console.log(`[escalation-tick] 30-min reminder sent for order ${order.id} (${reminderReason})`);
+
+    } catch (err) {
+      console.error(`[escalation-tick] Error processing 30-min reminder for order ${order.id}:`, err);
     }
   }
 }

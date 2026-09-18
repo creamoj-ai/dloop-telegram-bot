@@ -187,6 +187,12 @@ serve(async (req: Request) => {
     // Trigger scheduled broadcasts (when scheduled_broadcast_at <= now)
     await triggerScheduledBroadcasts();
 
+    // Send T-1h confirmation reminders to reserved riders
+    await sendRiderConfirmationReminders();
+
+    // Handle timed-out confirmations (15min timeout)
+    await handleTimedOutConfirmations();
+
     await escalatePendingOrders();
 
     return new Response(JSON.stringify({ success: true }), {
@@ -573,6 +579,297 @@ ${order.delivery_fee_shown ? `💰 Compenso: €${order.delivery_fee_shown.toFix
       }
     } catch (err) {
       console.error(`[escalation-tick] Error notifying rider ${rider.id}:`, err);
+    }
+  }
+}
+
+/**
+ * Reminder T-1h per rider prenotati (status = 'accepted').
+ * Invia prompt di conferma al rider: [✅ Confermo] [❌ Non posso]
+ * Se no response dopo 15min o [❌] → re-broadcast emergenza.
+ */
+async function sendRiderConfirmationReminders() {
+  const now = new Date();
+  const nowISO = now.toISOString();
+
+  console.log(`[escalation-tick] Checking rider confirmation reminders at ${nowISO}...`);
+
+  // Query ordini con status='accepted' + rider_reserved_at NOT NULL + rider_reminder_sent_at IS NULL
+  const { data: orders, error } = await supabase
+    .from("orders")
+    .select("id, assigned_rider_id, delivery_slot, rider_reserved_at, customer_name, restaurant_name, dropoff_address")
+    .eq("status", "accepted")
+    .not("rider_reserved_at", "is", null)
+    .is("rider_reminder_sent_at", null);
+
+  if (error) {
+    console.error("[escalation-tick] Error fetching rider reminders:", error);
+    return;
+  }
+
+  if (!orders || orders.length === 0) {
+    console.log("[escalation-tick] No rider reminders to send");
+    return;
+  }
+
+  console.log(`[escalation-tick] Found ${orders.length} orders for confirmation reminders`);
+
+  for (const order of orders) {
+    try {
+      // Calcola T-1h dalla delivery_slot
+      let shouldSendReminder = false;
+      let reminderReason = "";
+
+      if (order.delivery_slot) {
+        const slot = parseDeliverySlot(order.delivery_slot);
+        if (slot) {
+          const dateStr = italyDateOf(now);
+          const slotStartUtc = italyHourToUtc(dateStr, slot.startH);
+
+          // Se fascia è nel passato, usa domani
+          let reminderTime = slotStartUtc;
+          if (slotStartUtc <= now) {
+            const tomorrow = new Date(now);
+            tomorrow.setDate(tomorrow.getDate() + 1);
+            const tomorrowStr = italyDateOf(tomorrow);
+            reminderTime = italyHourToUtc(tomorrowStr, slot.startH);
+          }
+
+          // T-1h prima della fascia
+          const oneHourBefore = new Date(reminderTime.getTime() - 60 * 60_000);
+
+          if (now >= oneHourBefore) {
+            shouldSendReminder = true;
+            reminderReason = `fascia ${order.delivery_slot}: T-1h (${oneHourBefore.toISOString()})`;
+          }
+        }
+      }
+
+      if (!shouldSendReminder) continue;
+
+      // Fetch rider per telegram_user_id
+      const { data: rider, error: riderError } = await supabase
+        .from("riders")
+        .select("id, name, telegram_user_id")
+        .eq("id", order.assigned_rider_id)
+        .maybeSingle();
+
+      if (riderError || !rider) {
+        console.warn(`[escalation-tick] Rider non trovato per ordine ${order.id}`);
+        continue;
+      }
+
+      if (!rider.telegram_user_id) {
+        console.warn(`[escalation-tick] Rider ${rider.id} senza telegram_user_id`);
+        continue;
+      }
+
+      const orderShortId = order.id.slice(0, 8).toUpperCase();
+      const deliverySlot = order.delivery_slot || "N/D";
+
+      const message = `
+⏰ **Confermi il ritiro per le ${deliverySlot}?**
+
+Ordine: #${orderShortId}
+🏪 ${order.restaurant_name || "Esercente"}
+📍 Consegna: ${order.dropoff_address || "N/D"}
+👤 Cliente: ${order.customer_name || "N/D"}
+
+Rispondi entro 15 minuti, altrimenti verrà offerto ad altri rider.
+      `.trim();
+
+      const TELEGRAM_RIDER_BOT_TOKEN = Deno.env.get("TELEGRAM_RIDER_BOT_TOKEN") || "";
+
+      if (!TELEGRAM_RIDER_BOT_TOKEN) {
+        console.error("[escalation-tick] TELEGRAM_RIDER_BOT_TOKEN non configurato");
+        continue;
+      }
+
+      try {
+        const url = `https://api.telegram.org/bot${TELEGRAM_RIDER_BOT_TOKEN}/sendMessage`;
+        const response = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            chat_id: rider.telegram_user_id,
+            text: message,
+            parse_mode: "Markdown",
+            reply_markup: {
+              inline_keyboard: [
+                [
+                  { text: "✅ Confermo", callback_data: `confirm_rider_${order.id}` },
+                  { text: "❌ Non posso", callback_data: `cancel_rider_${order.id}` },
+                ],
+              ],
+            },
+          }),
+        });
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          console.error(`[escalation-tick] Error sending reminder to rider ${rider.id}:`, errorText);
+          continue;
+        }
+
+        // Aggiorna ordine: setta rider_reminder_sent_at e confirmation_prompt_sent_at
+        const { error: updateError } = await supabase
+          .from("orders")
+          .update({
+            rider_reminder_sent_at: nowISO,
+            confirmation_prompt_sent_at: nowISO,
+          })
+          .eq("id", order.id);
+
+        if (updateError) {
+          console.error(`[escalation-tick] Error updating order ${order.id}:`, updateError);
+          continue;
+        }
+
+        console.log(`[escalation-tick] Reminder sent to rider ${rider.id} for order ${order.id} (${reminderReason})`);
+
+      } catch (err) {
+        console.error(`[escalation-tick] Error notifying rider ${rider.id}:`, err);
+      }
+
+    } catch (err) {
+      console.error(`[escalation-tick] Error processing reminder for order ${order.id}:`, err);
+    }
+  }
+}
+
+/**
+ * Gestisce timeout 15min per confirmation prompt del rider.
+ * Se rider non conferma entro 15min, re-broadcast emergenza.
+ */
+async function handleTimedOutConfirmations() {
+  const now = new Date();
+  const nowISO = now.toISOString();
+
+  console.log(`[escalation-tick] Checking timed-out confirmations at ${nowISO}...`);
+
+  // Query ordini con status='accepted' + confirmation_prompt_sent_at NOT NULL + rider_confirmed_at IS NULL
+  const { data: orders, error } = await supabase
+    .from("orders")
+    .select("id, assigned_rider_id, dealer_contact_id, confirmation_prompt_sent_at, restaurant_name, delivery_slot")
+    .eq("status", "accepted")
+    .not("confirmation_prompt_sent_at", "is", null)
+    .is("rider_confirmed_at", null);
+
+  if (error) {
+    console.error("[escalation-tick] Error fetching timed-out confirmations:", error);
+    return;
+  }
+
+  if (!orders || orders.length === 0) {
+    console.log("[escalation-tick] No timed-out confirmations");
+    return;
+  }
+
+  const ordersToRebroadcast = [];
+
+  for (const order of orders) {
+    const promptSentAt = new Date(order.confirmation_prompt_sent_at!);
+    const fifteenMinutesLater = new Date(promptSentAt.getTime() + 15 * 60_000);
+
+    if (now >= fifteenMinutesLater) {
+      ordersToRebroadcast.push(order);
+    }
+  }
+
+  if (ordersToRebroadcast.length === 0) {
+    console.log("[escalation-tick] No confirmations timed out");
+    return;
+  }
+
+  console.log(`[escalation-tick] Found ${ordersToRebroadcast.length} timed-out confirmations`);
+
+  for (const order of ordersToRebroadcast) {
+    try {
+      const orderShortId = order.id.slice(0, 8).toUpperCase();
+
+      // 1. Reset ordine: torna a pending + svuota rider prenotato
+      const { error: resetError } = await supabase
+        .from("orders")
+        .update({
+          status: "pending",
+          assigned_rider_id: null,
+          rider_reserved_at: null,
+          rider_reminder_sent_at: null,
+          confirmation_prompt_sent_at: null,
+          broadcast_tier: 0,
+          broadcast_started_at: nowISO,
+        })
+        .eq("id", order.id);
+
+      if (resetError) {
+        console.error(`[escalation-tick] Error resetting order ${order.id}:`, resetError);
+        continue;
+      }
+
+      console.log(`[escalation-tick] Ordine ${order.id} resetted per re-broadcast emergenza (confirmation timeout)`);
+
+      // 2. Chiama dispatch-order Edge Function per rilanciare broadcast
+      try {
+        const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
+        const dispatchUrl = `${supabaseUrl}/functions/v1/dispatch-order`;
+        const dispatchResponse = await fetch(dispatchUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Admin-Key": Deno.env.get("WOZ_ADMIN_KEY") || "",
+          },
+          body: JSON.stringify({ order_id: order.id }),
+        });
+
+        if (!dispatchResponse.ok) {
+          const errorText = await dispatchResponse.text();
+          console.error(`[escalation-tick] Error rebroadcasting order ${order.id}:`, errorText);
+        } else {
+          console.log(`[escalation-tick] Re-broadcast triggered for order ${order.id}`);
+        }
+      } catch (err) {
+        console.error(`[escalation-tick] Error calling dispatch-order for ${order.id}:`, err);
+      }
+
+      // 3. Notifica merchant
+      if (!order.dealer_contact_id) continue;
+
+      const { data: dealer } = await supabase
+        .from("dealers")
+        .select("telegram_user_id")
+        .eq("id", order.dealer_contact_id)
+        .maybeSingle();
+
+      if (dealer?.telegram_user_id && CONFIG.telegram.token) {
+        const message = `
+⚠️ **Ordine #${orderShortId}** — il rider non ha confermato.
+
+Stiamo cercando un nuovo rider per le ${order.delivery_slot || "N/D"}.
+
+📍 ${order.restaurant_name || "Esercente"}
+
+Ti avvertiremo quando un nuovo rider accetterà.
+        `.trim();
+
+        try {
+          await fetch(`https://api.telegram.org/bot${CONFIG.telegram.token}/sendMessage`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              chat_id: dealer.telegram_user_id,
+              text: message,
+              parse_mode: "Markdown",
+            }),
+          });
+
+          console.log(`[escalation-tick] Merchant notificato per timeout confirmation ordine ${order.id}`);
+        } catch (err) {
+          console.error(`[escalation-tick] Error notifying merchant for ${order.id}:`, err);
+        }
+      }
+
+    } catch (err) {
+      console.error(`[escalation-tick] Error processing timed-out confirmation for ${order.id}:`, err);
     }
   }
 }

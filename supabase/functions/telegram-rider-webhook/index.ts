@@ -255,6 +255,194 @@ bot.callbackQuery(/^decline_order_(.+)$/, async (ctx) => {
   }
 });
 
+// Callback: confirm_rider_{orderId} — Rider conferma prenotazione
+bot.callbackQuery(/^confirm_rider_(.+)$/, async (ctx) => {
+  const orderId = (ctx.match as RegExpMatchArray)[1];
+  const riderTelegramId = ctx.from?.id;
+
+  if (!riderTelegramId) {
+    await ctx.answerCallbackQuery({ text: "Errore: rider non identificato", show_alert: true });
+    return;
+  }
+
+  try {
+    // Fetch rider
+    const { data: rider } = await supabase
+      .from("riders")
+      .select("id")
+      .eq("telegram_user_id", riderTelegramId)
+      .maybeSingle();
+
+    if (!rider) {
+      await ctx.answerCallbackQuery({ text: "Rider non trovato", show_alert: true });
+      return;
+    }
+
+    // Setta rider_confirmed_at = now()
+    const now = new Date().toISOString();
+    const { error: updateError } = await supabase
+      .from("orders")
+      .update({ rider_confirmed_at: now })
+      .eq("id", orderId)
+      .eq("assigned_rider_id", rider.id);
+
+    if (updateError) {
+      console.error("[rider-bot] Error confirming rider:", updateError);
+      await ctx.answerCallbackQuery({ text: "Errore durante la conferma", show_alert: true });
+      return;
+    }
+
+    // Risposta al rider
+    await ctx.answerCallbackQuery({ text: "✅ Confermato" });
+    await ctx.editMessageReplyMarkup({ reply_markup: { inline_keyboard: [] } });
+
+    const orderShortId = orderId.slice(0, 8).toUpperCase();
+    await ctx.reply(
+      `✅ **Confermato!**\n\n` +
+      `Ordine #${orderShortId}\n\n` +
+      `Ti ricordiamo 30 minuti prima del ritiro. Preparati! 🚀`
+    );
+
+    console.log(`[rider-bot] Rider ${rider.id} confermato per ordine ${orderId}`);
+
+  } catch (err) {
+    console.error("[rider-bot] Errore confirm_rider:", err);
+    await ctx.answerCallbackQuery({ text: "Errore conferma", show_alert: true });
+  }
+});
+
+// Callback: cancel_rider_{orderId} — Rider cancella prenotazione
+bot.callbackQuery(/^cancel_rider_(.+)$/, async (ctx) => {
+  const orderId = (ctx.match as RegExpMatchArray)[1];
+  const riderTelegramId = ctx.from?.id;
+
+  if (!riderTelegramId) {
+    await ctx.answerCallbackQuery({ text: "Errore: rider non identificato", show_alert: true });
+    return;
+  }
+
+  try {
+    // Fetch rider e ordine
+    const { data: rider } = await supabase
+      .from("riders")
+      .select("id")
+      .eq("telegram_user_id", riderTelegramId)
+      .maybeSingle();
+
+    if (!rider) {
+      await ctx.answerCallbackQuery({ text: "Rider non trovato", show_alert: true });
+      return;
+    }
+
+    const { data: order } = await supabase
+      .from("orders")
+      .select("id, dealer_contact_id, restaurant_name, delivery_slot")
+      .eq("id", orderId)
+      .eq("assigned_rider_id", rider.id)
+      .maybeSingle();
+
+    if (!order) {
+      await ctx.answerCallbackQuery({ text: "Ordine non trovato", show_alert: true });
+      return;
+    }
+
+    // Reset ordine: status=pending, assigned_rider_id=null, svuota campi rider
+    const now = new Date().toISOString();
+    const { error: resetError } = await supabase
+      .from("orders")
+      .update({
+        status: "pending",
+        assigned_rider_id: null,
+        rider_reserved_at: null,
+        rider_reminder_sent_at: null,
+        rider_confirmed_at: null,
+        confirmation_prompt_sent_at: null,
+        broadcast_tier: 0,
+        broadcast_started_at: now,
+      })
+      .eq("id", orderId);
+
+    if (resetError) {
+      console.error("[rider-bot] Error resetting order:", resetError);
+      await ctx.answerCallbackQuery({ text: "Errore durante il reset", show_alert: true });
+      return;
+    }
+
+    console.log(`[rider-bot] Ordine ${orderId} resetted per cancellazione rider ${rider.id}`);
+
+    // Chiama dispatch-order Edge Function per re-broadcast
+    try {
+      const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
+      const dispatchUrl = `${supabaseUrl}/functions/v1/dispatch-order`;
+      const dispatchResponse = await fetch(dispatchUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Admin-Key": Deno.env.get("WOZ_ADMIN_KEY") || "",
+        },
+        body: JSON.stringify({ order_id: orderId }),
+      });
+
+      if (!dispatchResponse.ok) {
+        const errorText = await dispatchResponse.text();
+        console.error(`[rider-bot] Error rebroadcasting order ${orderId}:`, errorText);
+      } else {
+        console.log(`[rider-bot] Re-broadcast triggered for order ${orderId}`);
+      }
+    } catch (err) {
+      console.error(`[rider-bot] Error calling dispatch-order:`, err);
+    }
+
+    // Risposta al rider
+    await ctx.answerCallbackQuery({ text: "Ok, cancelliamo" });
+    await ctx.editMessageReplyMarkup({ reply_markup: { inline_keyboard: [] } });
+    await ctx.reply(
+      `Ok, cercheremo un altro rider. 🔄\n\n` +
+      `Grazie per l'avviso tempestivo!`
+    );
+
+    // Notifica merchant
+    const { data: dealer } = await supabase
+      .from("dealers")
+      .select("telegram_user_id")
+      .eq("id", order.dealer_contact_id)
+      .maybeSingle();
+
+    if (dealer?.telegram_user_id && TELEGRAM_MERCHANT_BOT_TOKEN) {
+      const orderShortId = orderId.slice(0, 8).toUpperCase();
+      const message = `
+⚠️ **Ordine #${orderShortId}** — il rider ha cancellato.
+
+Stiamo cercando un sostituto per le ${order.delivery_slot || "N/D"}.
+
+📍 ${order.restaurant_name || "Esercente"}
+
+Ti avvertiremo quando un nuovo rider accetterà.
+      `.trim();
+
+      try {
+        await fetch(`https://api.telegram.org/bot${TELEGRAM_MERCHANT_BOT_TOKEN}/sendMessage`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            chat_id: dealer.telegram_user_id,
+            text: message,
+            parse_mode: "Markdown",
+          }),
+        });
+
+        console.log(`[rider-bot] Merchant notificato per cancellazione rider ordine ${orderId}`);
+      } catch (err) {
+        console.error(`[rider-bot] Error notifying merchant:`, err);
+      }
+    }
+
+  } catch (err) {
+    console.error("[rider-bot] Errore cancel_rider:", err);
+    await ctx.answerCallbackQuery({ text: "Errore cancellazione", show_alert: true });
+  }
+});
+
 // Callback: pickup_confirmed_{orderId}
 bot.callbackQuery(/^pickup_confirmed_(.+)$/, async (ctx) => {
   const orderId = (ctx.match as RegExpMatchArray)[1];

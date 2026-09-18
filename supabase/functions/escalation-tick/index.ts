@@ -450,10 +450,13 @@ async function escalatePendingOrders() {
         const dateStr = italyDateOf(now);
         const slotEndUtc = italyHourToUtc(dateStr, slot.endH);
 
+        console.log(`[escalation-tick] Order ${order.id.slice(0, 8)}: slotEndUtc="${slotEndUtc.toISOString()}", now="${now.toISOString()}", slotEndUtc<=now=${slotEndUtc <= now}`);
+
         // Se fascia già scaduta → escalate immediatamente
         if (slotEndUtc <= now) {
           shouldEscalate = true;
           escalationReason = `fascia ${order.delivery_slot}: scaduta, escalation immediata`;
+          console.log(`[escalation-tick] Order ${order.id.slice(0, 8)}: shouldEscalate=true (slot scaduto)`);
         } else {
           // Altrimenti usa T-30min
           const slotTimes = calculateSlotTimestamps(order.delivery_slot, now);
@@ -462,6 +465,9 @@ async function escalatePendingOrders() {
             if (now >= escalationTime) {
               shouldEscalate = true;
               escalationReason = `fascia ${order.delivery_slot}: T-30min (${escalationTime.toISOString()})`;
+              console.log(`[escalation-tick] Order ${order.id.slice(0, 8)}: shouldEscalate=true (T-30min)`);
+            } else {
+              console.log(`[escalation-tick] Order ${order.id.slice(0, 8)}: shouldEscalate=false, escalationTime="${escalationTime.toISOString()}", now="${now.toISOString()}"`);
             }
           }
         }
@@ -473,6 +479,9 @@ async function escalatePendingOrders() {
       if (now >= sixtySecondsLater) {
         shouldEscalate = true;
         escalationReason = `fallback: 60s da broadcast (${sixtySecondsLater.toISOString()})`;
+        console.log(`[escalation-tick] Order ${order.id.slice(0, 8)}: shouldEscalate=true (fallback 60s)`);
+      } else {
+        console.log(`[escalation-tick] Order ${order.id.slice(0, 8)}: shouldEscalate=false (fallback), sixtySecondsLater="${sixtySecondsLater.toISOString()}", now="${now.toISOString()}"`);
       }
     }
 

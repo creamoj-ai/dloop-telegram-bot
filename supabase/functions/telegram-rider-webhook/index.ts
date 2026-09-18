@@ -89,6 +89,7 @@ bot.command("start", async (ctx) => {
 });
 
 // Callback: accept_order_{orderId}
+// FLUSSO: Rider prenota ordine anticipato (rider_reserved)
 bot.callbackQuery(/^accept_order_(.+)$/, async (ctx) => {
   const orderId = (ctx.match as RegExpMatchArray)[1];
   const riderTelegramId = ctx.from?.id;
@@ -111,18 +112,18 @@ bot.callbackQuery(/^accept_order_(.+)$/, async (ctx) => {
       return;
     }
 
-    // 2. Update order: assegna rider + status ASSIGNED (guard race condition)
+    // 2. Update order: status pending → accepted + rider_reserved_at (guard race condition)
     // IMPORTANTE: UPDATE condizionale con .eq("status", "pending") → FCFS atomico
     const { data: updatedOrder, error: updateError } = await supabase
       .from("orders")
       .update({
         assigned_rider_id: rider.id,
-        status: "assigned",
-        assigned_at: new Date().toISOString(),
+        status: "accepted",
+        rider_reserved_at: new Date().toISOString(),
       })
       .eq("id", orderId)
       .eq("status", "pending") // ← RACE CONDITION GUARD
-      .select("id, pickup_address, dropoff_address, customer_address, customer_name, customer_phone, delivery_fee_shown, restaurant_name, dealer_contact_id")
+      .select("id, pickup_address, dropoff_address, customer_address, customer_name, customer_phone, delivery_fee_shown, restaurant_name, dealer_contact_id, delivery_slot")
       .maybeSingle();
 
     if (updateError) {
@@ -132,42 +133,38 @@ bot.callbackQuery(/^accept_order_(.+)$/, async (ctx) => {
     }
 
     if (!updatedOrder) {
-      // Ordine già assegnato ad altro rider
-      await ctx.answerCallbackQuery({ text: "❌ Ordine già assegnato ad altro rider", show_alert: true });
+      // Ordine già prenotato da altro rider
+      await ctx.answerCallbackQuery({ text: "❌ Ordine già prenotato da altro rider", show_alert: true });
       await ctx.editMessageReplyMarkup({ reply_markup: { inline_keyboard: [] } });
       await ctx.editMessageText(
-        `❌ **Ordine già assegnato**\n\n` +
-        `Un altro rider ha accettato questo ordine.`
+        `❌ **Ordine già prenotato**\n\n` +
+        `Un altro rider ha prenotato questo ordine.`
       );
       return;
     }
 
-    // 3. Successo: ordine assegnato
-    await ctx.answerCallbackQuery({ text: "✅ Ordine assegnato" });
+    // 3. Successo: ordine prenotato
+    await ctx.answerCallbackQuery({ text: "✅ Ordine prenotato" });
     await ctx.editMessageReplyMarkup({ reply_markup: { inline_keyboard: [] } });
 
     const orderShortId = orderId.slice(0, 8).toUpperCase();
+    const deliverySlot = updatedOrder.delivery_slot || "N/D";
+
+    // 3a. NOTIFICA RIDER
     await ctx.reply(
-      `✅ **Ordine #${orderShortId} assegnato a te!**\n\n` +
+      `✅ **Prenotazione confermata per le ${deliverySlot}!**\n\n` +
       `${updatedOrder.restaurant_name ? `🏪 **Esercente:** ${updatedOrder.restaurant_name}\n` : ""}` +
       `📍 **Ritiro:** ${updatedOrder.pickup_address}\n` +
       `📍 **Consegna:** ${updatedOrder.dropoff_address || updatedOrder.customer_address || "N/D"}\n` +
       `👤 **Destinatario:** ${updatedOrder.customer_name}\n` +
       `📱 **Telefono:** ${updatedOrder.customer_phone}\n` +
       `${updatedOrder.delivery_fee_shown ? `💰 **Compenso:** €${updatedOrder.delivery_fee_shown.toFixed(2)}` : ''}\n\n` +
-      `**Premi quando hai ritirato il pacco:**`,
-      {
-        reply_markup: {
-          inline_keyboard: [[
-            { text: "📦 Ho ritirato", callback_data: `pickup_confirmed_${orderId}` },
-          ]],
-        },
-      }
+      `⏰ **Ti ricordiamo 1h prima della fascia oraria.**`
     );
 
-    console.log(`[rider-bot] Rider ${rider.id} (${rider.name}) accepted order ${orderId}`);
+    console.log(`[rider-bot] Rider ${rider.id} (${rider.name}) prenotato ordine ${orderId} per ${deliverySlot}`);
 
-    // Notifica merchant: rider ha accettato
+    // 3b. NOTIFICA MERCHANT
     const { data: dealer } = await supabase
       .from("dealers")
       .select("telegram_user_id")
@@ -180,10 +177,15 @@ bot.callbackQuery(/^accept_order_(.+)$/, async (ctx) => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           chat_id: dealer.telegram_user_id,
-          text: `🛵 Ordine #${orderShortId} — rider ${rider.name} ha accettato e sta arrivando al ritiro.`,
+          text: `🏍️ **${rider.name}** ha prenotato la tua consegna per le **${deliverySlot}** — preparati!`,
+          parse_mode: "Markdown",
         }),
       });
     }
+
+    // 3c. NOTIFICA CLIENTE (skip per ora)
+    // TODO: Implementare quando cliente_telegram_user_id disponibile in orders
+
   } catch (err) {
     console.error("[rider-bot] Errore handleAcceptOrder:", err);
     await ctx.answerCallbackQuery({ text: "Errore accettazione ordine", show_alert: true });

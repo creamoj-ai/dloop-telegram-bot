@@ -40,6 +40,7 @@ interface OrderData {
   customer_name?: string; // Schema uses customer_name
   customer_phone?: string; // Schema uses customer_phone
   notes?: string;
+  delivery_slot?: string; // Fascia oraria es. "09-11", "11-13"
 }
 
 serve(async (req: Request) => {
@@ -182,6 +183,34 @@ async function handleGet(token: string, supabase: any): Promise<Response> {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     }
   );
+}
+
+/**
+ * Calcola scheduled_broadcast_at = inizio fascia oraria - 2h (timezone Europe/Rome)
+ * Formato delivery_slot: "HH-HH" es. "09-11"
+ * Ritorna string ISO o null se delivery_slot vuoto
+ */
+function calculateScheduledBroadcastAt(deliverySlot: string | null | undefined): string | null {
+  if (!deliverySlot) return null;
+
+  const match = deliverySlot.match(/^(\d{1,2})-(\d{1,2})$/);
+  if (!match) return null;
+
+  const startHour = parseInt(match[1], 10);
+  const broadcastHour = Math.max(0, startHour - 2); // T-2h, min 00:00
+
+  // Calcola data odierna in Italy/Rome timezone
+  const now = new Date();
+  const italyDate = now.toLocaleDateString("sv", { timeZone: "Europe/Rome" }); // "YYYY-MM-DD"
+
+  // Converte ora italia a UTC, gestendo DST
+  const t = new Date(`${italyDate}T${String(broadcastHour).padStart(2, "0")}:00:00Z`);
+  const actual = parseInt(
+    t.toLocaleTimeString("en-GB", { timeZone: "Europe/Rome", hour: "2-digit", hour12: false })
+  );
+  const scheduledUtc = new Date(t.getTime() - (actual - broadcastHour) * 3_600_000);
+
+  return scheduledUtc.toISOString();
 }
 
 /**
@@ -341,6 +370,12 @@ async function handlePost(token: string, req: Request, supabase: any): Promise<R
     // dropoff_point (geography) NON viene scritto - resta NULL
   };
 
+  // Calcola e setta scheduled_broadcast_at solo se delivery_slot presente
+  const scheduledBroadcastAt = calculateScheduledBroadcastAt(order.delivery_slot);
+  if (scheduledBroadcastAt) {
+    updateData.scheduled_broadcast_at = scheduledBroadcastAt;
+  }
+
   // Add notes se presenti
   if (notes) {
     updateData.notes = notes;
@@ -448,7 +483,7 @@ async function handlePost(token: string, req: Request, supabase: any): Promise<R
 async function getOrderByToken(token: string, supabase: any): Promise<OrderData | null> {
   const { data, error } = await supabase
     .from("orders")
-    .select("customer_token, token_expires_at, status, package_size, package_count, is_fragile, pickup_address, restaurant_name, payment_mode, delivery_pin, id, dealer_contact_id, customer_name")
+    .select("customer_token, token_expires_at, status, package_size, package_count, is_fragile, pickup_address, restaurant_name, payment_mode, delivery_pin, id, dealer_contact_id, customer_name, delivery_slot")
     .eq("customer_token", token)
     .maybeSingle();
 

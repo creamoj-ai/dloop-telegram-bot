@@ -104,6 +104,11 @@ function parseDeliverySlot(slot: string): { startH: number; endH: number } | nul
  * Calculate timing thresholds for delivery slot
  * Returns timestamps for: escalation (T-30min), cancellation (T+5min)
  * Times are calculated in Europe/Rome timezone
+ *
+ * Handles 3 cases:
+ * 1. now è DOPO la fine fascia → usa fascia di domani
+ * 2. now è DENTRO la fascia → escalation 15min da ora, cancellation a fine fascia
+ * 3. now è PRIMA della fascia → escalation T-30min, cancellation T+5min
  */
 function calculateSlotTimestamps(
   slotStr: string,
@@ -118,7 +123,7 @@ function calculateSlotTimestamps(
   const slotStartUtc = italyHourToUtc(dateStr, slot.startH);
   const slotEndUtc = italyHourToUtc(dateStr, slot.endH);
 
-  // If slot is in the past, use tomorrow's slot
+  // CASO 1: now è DOPO la fine fascia → usa fascia di domani
   if (slotEndUtc <= now) {
     const tomorrow = new Date(now);
     tomorrow.setDate(tomorrow.getDate() + 1);
@@ -129,6 +134,15 @@ function calculateSlotTimestamps(
     };
   }
 
+  // CASO 2: now è DENTRO la fascia (slotStart <= now < slotEnd)
+  if (now >= slotStartUtc && now < slotEndUtc) {
+    return {
+      escalationTime: new Date(now.getTime() + 15 * 60_000),
+      cancellationTime: slotEndUtc,
+    };
+  }
+
+  // CASO 3: now è PRIMA della fascia
   return {
     escalationTime: new Date(slotStartUtc.getTime() - 30 * 60_000),
     cancellationTime: new Date(slotStartUtc.getTime() + 5 * 60_000),

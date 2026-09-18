@@ -291,6 +291,7 @@ async function cancelTimedOutOrders() {
     .eq("dispatch_status", "pending")
     .neq("status", "cancelled")
     .neq("status", "completed")
+    .neq("status", "accepted")
     .not("broadcast_started_at", "is", null);
 
   if (error) {

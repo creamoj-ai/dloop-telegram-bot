@@ -383,8 +383,8 @@ async function handlePost(token: string, req: Request, supabase: any): Promise<R
   }
 
   // Add notes se presenti
-  if (notes) {
-    updateData.notes = notes;
+  if (deliveryNotes) {
+    updateData.notes = deliveryNotes;
   }
 
   const { error: updateError } = await supabase

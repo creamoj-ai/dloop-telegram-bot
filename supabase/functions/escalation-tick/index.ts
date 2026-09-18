@@ -444,12 +444,25 @@ async function escalatePendingOrders() {
 
     if (order.delivery_slot) {
       // Escalation a T-30min dalla fascia oraria
-      const slotTimes = calculateSlotTimestamps(order.delivery_slot, now);
-      if (slotTimes) {
-        const escalationTime = slotTimes.escalationTime;
-        if (now >= escalationTime) {
+      const slot = parseDeliverySlot(order.delivery_slot);
+      if (slot) {
+        const dateStr = italyDateOf(now);
+        const slotEndUtc = italyHourToUtc(dateStr, slot.endH);
+
+        // Se fascia già scaduta → escalate immediatamente
+        if (slotEndUtc <= now) {
           shouldEscalate = true;
-          escalationReason = `fascia ${order.delivery_slot}: T-30min (${escalationTime.toISOString()})`;
+          escalationReason = `fascia ${order.delivery_slot}: scaduta, escalation immediata`;
+        } else {
+          // Altrimenti usa T-30min
+          const slotTimes = calculateSlotTimestamps(order.delivery_slot, now);
+          if (slotTimes) {
+            const escalationTime = slotTimes.escalationTime;
+            if (now >= escalationTime) {
+              shouldEscalate = true;
+              escalationReason = `fascia ${order.delivery_slot}: T-30min (${escalationTime.toISOString()})`;
+            }
+          }
         }
       }
     } else {

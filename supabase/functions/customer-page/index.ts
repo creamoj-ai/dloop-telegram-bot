@@ -355,7 +355,6 @@ async function handlePost(token: string, req: Request, supabase: any): Promise<R
   console.log(`[customer-page] deliveryFeeShown calculated: ${deliveryFeeShown}`);
 
   // Update ordine: compila dati cliente + trigger broadcast
-  // Setta broadcast_tier=0 e broadcast_started_at per triggerare escalation-tick
   const updateData: Record<string, unknown> = {
     dropoff_address: dropoffAddress, // Indirizzo formattato Geoapify (TEXT)
     dropoff_lat: dropoffLat, // Coordinate Geoapify
@@ -367,15 +366,20 @@ async function handlePost(token: string, req: Request, supabase: any): Promise<R
     status: "pending", // Rimane pending, escalation-tick gestirà il broadcast
     delivery_pin: deliveryPin,
     delivery_fee_shown: deliveryFeeShown ?? 4.30, // Forza sempre un valore
-    broadcast_tier: 0, // Tier iniziale (top reputation)
-    broadcast_started_at: new Date().toISOString(), // Trigger broadcast
     // dropoff_point (geography) NON viene scritto - resta NULL
   };
 
-  // Calcola e setta scheduled_broadcast_at solo se delivery_slot presente
-  const scheduledBroadcastAt = calculateScheduledBroadcastAt(order.delivery_slot);
-  if (scheduledBroadcastAt) {
+  // Decidi se broadcast schedulato o immediato
+  const scheduledBroadcastAt = calculateScheduledBroadcastAt(deliverySlot || null);
+  const now = new Date();
+
+  if (scheduledBroadcastAt && new Date(scheduledBroadcastAt) > now) {
+    // Broadcast schedulato nel futuro → NON avviare subito
     updateData.scheduled_broadcast_at = scheduledBroadcastAt;
+  } else {
+    // Nessuna fascia o fascia già iniziata → broadcast immediato
+    updateData.broadcast_tier = 0;
+    updateData.broadcast_started_at = now.toISOString();
   }
 
   // Add notes se presenti

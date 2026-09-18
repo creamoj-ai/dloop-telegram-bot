@@ -372,15 +372,10 @@ async function handlePost(token: string, req: Request, supabase: any): Promise<R
     // dropoff_point (geography) NON viene scritto - resta NULL
   };
 
-  // Calcola e setta scheduled_broadcast_at solo se delivery_slot presente
-  const scheduledBroadcastAt = calculateScheduledBroadcastAt(order.delivery_slot);
+  // Calcola e setta scheduled_broadcast_at solo se delivery_slot presente (usa il nuovo slot dal form)
+  const scheduledBroadcastAt = calculateScheduledBroadcastAt(deliverySlot);
   if (scheduledBroadcastAt) {
     updateData.scheduled_broadcast_at = scheduledBroadcastAt;
-  }
-
-  // Add notes se presenti
-  if (notes) {
-    updateData.notes = notes;
   }
 
   const { error: updateError } = await supabase

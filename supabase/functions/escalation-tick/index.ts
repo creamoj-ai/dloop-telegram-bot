@@ -130,7 +130,7 @@ function calculateSlotTimestamps(
     const tomorrowStr = italyDateOf(tomorrow);
     return {
       escalationTime: new Date(italyHourToUtc(tomorrowStr, slot.startH).getTime() - 30 * 60_000),
-      cancellationTime: new Date(italyHourToUtc(tomorrowStr, slot.startH).getTime() + 5 * 60_000),
+      cancellationTime: new Date(italyHourToUtc(tomorrowStr, slot.endH).getTime() + 5 * 60_000),
     };
   }
 
@@ -432,9 +432,13 @@ async function escalatePendingOrders() {
     return;
   }
 
+  console.log(`[escalation-tick] Found ${orders.length} orders, checking for escalation...`);
+
   const ordersToEscalate = [];
 
   for (const order of orders) {
+    console.log(`[escalation-tick] Order ${order.id.slice(0, 8)}: dealers=${JSON.stringify(order.dealers)}, delivery_slot="${order.delivery_slot}", broadcast_tier=${order.broadcast_tier}`);
+
     let shouldEscalate = false;
     let escalationReason = "";
 

@@ -453,7 +453,13 @@ async function getOrderByToken(token: string, supabase: any): Promise<OrderData 
     .eq("customer_token", token)
     .maybeSingle();
 
-  if (error || !data) {
+  if (error) {
+    console.error(`[customer-page] getOrderByToken error for token ${token}:`, error);
+    return null;
+  }
+
+  if (!data) {
+    console.warn(`[customer-page] getOrderByToken no data found for token ${token}`);
     return null;
   }
 

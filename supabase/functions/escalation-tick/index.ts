@@ -689,6 +689,8 @@ async function sendRiderConfirmationReminders() {
           // T-1h prima della fascia
           const oneHourBefore = new Date(reminderTime.getTime() - 60 * 60_000);
 
+          console.log(`[escalation-tick] Order ${order.id.slice(0, 8)}: delivery_slot="${order.delivery_slot}", slotStartUtc="${slotStartUtc.toISOString()}", reminderTime="${reminderTime.toISOString()}", oneHourBefore="${oneHourBefore.toISOString()}", now="${now.toISOString()}", now>=oneHourBefore=${now >= oneHourBefore}`);
+
           if (now >= oneHourBefore) {
             shouldSendReminder = true;
             reminderReason = `fascia ${order.delivery_slot}: T-1h (${oneHourBefore.toISOString()})`;
@@ -696,7 +698,10 @@ async function sendRiderConfirmationReminders() {
         }
       }
 
-      if (!shouldSendReminder) continue;
+      if (!shouldSendReminder) {
+        console.log(`[escalation-tick] Skipping order ${order.id.slice(0, 8)}: shouldSendReminder=false (no delivery_slot or T-1h not reached)`);
+        continue;
+      }
 
       // Defensive check: ordini orfani con rider_id null causano loop infinito
       if (!order.assigned_rider_id) {

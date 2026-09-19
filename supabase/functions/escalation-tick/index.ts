@@ -66,8 +66,18 @@ function italyHourToUtc(dateStr: string, h: number): Date {
     })
   );
   const offset = italyHourAtNoonUtc - 12; // Se 14:00 in Italy, offset = +2 (CEST)
-  const utcHour = h - offset;
-  return new Date(`${dateStr}T${String(utcHour).padStart(2, "0")}:00:00Z`);
+  let utcHour = h - offset;
+  let utcDate = dateStr;
+
+  // Handle underflow: se utcHour < 0, go to previous day
+  if (utcHour < 0) {
+    const prevDay = new Date(`${dateStr}T00:00:00Z`);
+    prevDay.setDate(prevDay.getDate() - 1);
+    utcDate = prevDay.toLocaleDateString("sv", { timeZone: "UTC" });
+    utcHour += 24;
+  }
+
+  return new Date(`${utcDate}T${String(utcHour).padStart(2, "0")}:00:00Z`);
 }
 
 function getCurrentDispatchBlock(
@@ -683,7 +693,12 @@ async function sendRiderConfirmationReminders() {
       if (order.delivery_slot) {
         const slot = parseDeliverySlot(order.delivery_slot);
         if (!slot) {
-          console.warn(`[escalation-tick] Order ${order.id.slice(0, 8)}: delivery_slot="${order.delivery_slot}" could not be parsed`);
+          console.warn(`[escalation-tick] Order ${order.id.slice(0, 8)}: delivery_slot="${order.delivery_slot}" could not be parsed. Marking reminder as sent to avoid log spam.`);
+          await supabase
+            .from("orders")
+            .update({ rider_reminder_sent_at: nowISO })
+            .eq("id", order.id);
+          continue;
         } else {
           const dateStr = italyDateOf(now);
           const slotStartUtc = italyHourToUtc(dateStr, slot.startH);
@@ -1015,7 +1030,12 @@ async function sendThirtyMinuteReminders() {
       if (order.delivery_slot) {
         const slot = parseDeliverySlot(order.delivery_slot);
         if (!slot) {
-          console.warn(`[escalation-tick] Order ${order.id.slice(0, 8)}: delivery_slot="${order.delivery_slot}" could not be parsed`);
+          console.warn(`[escalation-tick] Order ${order.id.slice(0, 8)}: delivery_slot="${order.delivery_slot}" could not be parsed. Marking 30min reminder as sent to avoid log spam.`);
+          await supabase
+            .from("orders")
+            .update({ thirty_min_reminder_sent_at: nowISO })
+            .eq("id", order.id);
+          continue;
         } else {
           const dateStr = italyDateOf(now);
           const slotStartUtc = italyHourToUtc(dateStr, slot.startH);
@@ -1057,6 +1077,16 @@ async function sendThirtyMinuteReminders() {
       }
 
       if (!shouldSendReminder) continue;
+
+      // Defensive check: ordini orfani con rider_id null causano loop infinito
+      if (!order.assigned_rider_id) {
+        console.warn(`[escalation-tick] CRITICAL: Order ${order.id} has assigned_rider_id = null. Marking 30min reminder as sent to break retry loop.`);
+        await supabase
+          .from("orders")
+          .update({ thirty_min_reminder_sent_at: nowISO })
+          .eq("id", order.id);
+        continue;
+      }
 
       // Fetch rider per telegram_user_id
       const { data: rider, error: riderError } = await supabase

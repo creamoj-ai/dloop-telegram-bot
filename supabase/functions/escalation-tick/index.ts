@@ -648,7 +648,7 @@ async function sendRiderConfirmationReminders() {
   // Query ordini con status='accepted' + rider_reserved_at NOT NULL + rider_reminder_sent_at IS NULL
   const { data: orders, error } = await supabase
     .from("orders")
-    .select("id, assigned_rider_id, delivery_slot, rider_reserved_at, customer_name, restaurant_name, dropoff_address")
+    .select("id, assigned_rider_id, delivery_slot, rider_reserved_at, created_at, customer_name, restaurant_name, dropoff_address")
     .eq("status", "accepted")
     .not("rider_reserved_at", "is", null)
     .is("rider_reminder_sent_at", null);
@@ -677,23 +677,41 @@ async function sendRiderConfirmationReminders() {
           const dateStr = italyDateOf(now);
           const slotStartUtc = italyHourToUtc(dateStr, slot.startH);
 
-          // Se fascia è nel passato, usa domani
+          // Se fascia è nel passato, verifica se è stata creata oggi con la fascia di oggi
           let reminderTime = slotStartUtc;
           if (slotStartUtc <= now) {
-            const tomorrow = new Date(now);
-            tomorrow.setDate(tomorrow.getDate() + 1);
-            const tomorrowStr = italyDateOf(tomorrow);
-            reminderTime = italyHourToUtc(tomorrowStr, slot.startH);
-          }
+            const orderCreatedDate = italyDateOf(new Date(order.created_at!));
+            const todayItalyDate = italyDateOf(now);
 
-          // T-1h prima della fascia
-          const oneHourBefore = new Date(reminderTime.getTime() - 60 * 60_000);
+            if (orderCreatedDate === todayItalyDate) {
+              // Ordine riservato oggi con fascia di oggi che è scaduta: escalazione immediata
+              shouldSendReminder = true;
+              reminderReason = `fascia ${order.delivery_slot}: scaduta oggi, escalation immediata`;
+              console.log(`[escalation-tick] Order ${order.id.slice(0, 8)}: delivery_slot="${order.delivery_slot}", created TODAY with TODAY's slot that has passed → escalating immediately`);
+            } else {
+              // Ordine da ieri/prima, usa la fascia di domani
+              const tomorrow = new Date(now);
+              tomorrow.setDate(tomorrow.getDate() + 1);
+              const tomorrowStr = italyDateOf(tomorrow);
+              reminderTime = italyHourToUtc(tomorrowStr, slot.startH);
 
-          console.log(`[escalation-tick] Order ${order.id.slice(0, 8)}: delivery_slot="${order.delivery_slot}", slotStartUtc="${slotStartUtc.toISOString()}", reminderTime="${reminderTime.toISOString()}", oneHourBefore="${oneHourBefore.toISOString()}", now="${now.toISOString()}", now>=oneHourBefore=${now >= oneHourBefore}`);
+              const oneHourBefore = new Date(reminderTime.getTime() - 60 * 60_000);
+              console.log(`[escalation-tick] Order ${order.id.slice(0, 8)}: delivery_slot="${order.delivery_slot}", created ${orderCreatedDate}, slotStartUtc="${slotStartUtc.toISOString()}", reminderTime (tomorrow)="${reminderTime.toISOString()}", oneHourBefore="${oneHourBefore.toISOString()}", now="${now.toISOString()}", now>=oneHourBefore=${now >= oneHourBefore}`);
 
-          if (now >= oneHourBefore) {
-            shouldSendReminder = true;
-            reminderReason = `fascia ${order.delivery_slot}: T-1h (${oneHourBefore.toISOString()})`;
+              if (now >= oneHourBefore) {
+                shouldSendReminder = true;
+                reminderReason = `fascia ${order.delivery_slot}: T-1h (${oneHourBefore.toISOString()})`;
+              }
+            }
+          } else {
+            // Fascia è nel futuro, calcola T-1h
+            const oneHourBefore = new Date(reminderTime.getTime() - 60 * 60_000);
+            console.log(`[escalation-tick] Order ${order.id.slice(0, 8)}: delivery_slot="${order.delivery_slot}", slotStartUtc="${slotStartUtc.toISOString()}", oneHourBefore="${oneHourBefore.toISOString()}", now="${now.toISOString()}", now>=oneHourBefore=${now >= oneHourBefore}`);
+
+            if (now >= oneHourBefore) {
+              shouldSendReminder = true;
+              reminderReason = `fascia ${order.delivery_slot}: T-1h (${oneHourBefore.toISOString()})`;
+            }
           }
         }
       }

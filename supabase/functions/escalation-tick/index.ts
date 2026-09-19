@@ -698,6 +698,16 @@ async function sendRiderConfirmationReminders() {
 
       if (!shouldSendReminder) continue;
 
+      // Defensive check: ordini orfani con rider_id null causano loop infinito
+      if (!order.assigned_rider_id) {
+        console.warn(`[escalation-tick] CRITICAL: Order ${order.id} has assigned_rider_id = null. Marking reminder as sent to break retry loop.`);
+        await supabase
+          .from("orders")
+          .update({ rider_reminder_sent_at: nowISO })
+          .eq("id", order.id);
+        continue;
+      }
+
       // Fetch rider per telegram_user_id
       const { data: rider, error: riderError } = await supabase
         .from("riders")
@@ -706,7 +716,11 @@ async function sendRiderConfirmationReminders() {
         .maybeSingle();
 
       if (riderError || !rider) {
-        console.warn(`[escalation-tick] Rider non trovato per ordine ${order.id}`);
+        console.warn(`[escalation-tick] Rider non trovato per ordine ${order.id} (assigned_rider_id=${order.assigned_rider_id}). Marking reminder as sent to break retry loop.`);
+        await supabase
+          .from("orders")
+          .update({ rider_reminder_sent_at: nowISO })
+          .eq("id", order.id);
         continue;
       }
 

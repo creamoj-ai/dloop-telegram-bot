@@ -55,9 +55,18 @@ function italyDateOf(d: Date): string {
 }
 
 function italyHourToUtc(dateStr: string, h: number): Date {
-  // Italia è UTC+2 (CEST). Convertire ora italiana a UTC sottraendo 2 ore.
-  // Esempio: 19:00 Italia → 17:00 UTC (19 - 2 = 17)
-  const utcHour = h - 2;
+  // Dinamicamente derivi offset per gestire CET (UTC+1) e CEST (UTC+2)
+  // Compara ora UTC con ora Italy timezone per lo stesso istante
+  const testDateUtc = new Date(`${dateStr}T12:00:00Z`);
+  const italyHourAtNoonUtc = parseInt(
+    testDateUtc.toLocaleTimeString("en-GB", {
+      timeZone: ITALY_TZ,
+      hour: "2-digit",
+      hour12: false,
+    })
+  );
+  const offset = italyHourAtNoonUtc - 12; // Se 14:00 in Italy, offset = +2 (CEST)
+  const utcHour = h - offset;
   return new Date(`${dateStr}T${String(utcHour).padStart(2, "0")}:00:00Z`);
 }
 
@@ -673,7 +682,9 @@ async function sendRiderConfirmationReminders() {
 
       if (order.delivery_slot) {
         const slot = parseDeliverySlot(order.delivery_slot);
-        if (slot) {
+        if (!slot) {
+          console.warn(`[escalation-tick] Order ${order.id.slice(0, 8)}: delivery_slot="${order.delivery_slot}" could not be parsed`);
+        } else {
           const dateStr = italyDateOf(now);
           const slotStartUtc = italyHourToUtc(dateStr, slot.startH);
 
@@ -978,7 +989,7 @@ async function sendThirtyMinuteReminders() {
   // Query ordini con status='accepted' + rider_confirmed_at NOT NULL + thirty_min_reminder_sent_at IS NULL
   const { data: orders, error } = await supabase
     .from("orders")
-    .select("id, assigned_rider_id, dealer_contact_id, delivery_slot, rider_confirmed_at, customer_name, restaurant_name, dropoff_address")
+    .select("id, assigned_rider_id, dealer_contact_id, delivery_slot, rider_confirmed_at, created_at, customer_name, restaurant_name, dropoff_address")
     .eq("status", "accepted")
     .not("rider_confirmed_at", "is", null)
     .is("thirty_min_reminder_sent_at", null);
@@ -1003,25 +1014,44 @@ async function sendThirtyMinuteReminders() {
 
       if (order.delivery_slot) {
         const slot = parseDeliverySlot(order.delivery_slot);
-        if (slot) {
+        if (!slot) {
+          console.warn(`[escalation-tick] Order ${order.id.slice(0, 8)}: delivery_slot="${order.delivery_slot}" could not be parsed`);
+        } else {
           const dateStr = italyDateOf(now);
           const slotStartUtc = italyHourToUtc(dateStr, slot.startH);
 
-          // Se fascia è nel passato, usa domani
+          // Se fascia è nel passato, verifica se è stata creata oggi con la fascia di oggi
           let reminderTime = slotStartUtc;
           if (slotStartUtc <= now) {
-            const tomorrow = new Date(now);
-            tomorrow.setDate(tomorrow.getDate() + 1);
-            const tomorrowStr = italyDateOf(tomorrow);
-            reminderTime = italyHourToUtc(tomorrowStr, slot.startH);
-          }
+            const orderCreatedDate = italyDateOf(new Date(order.created_at!));
+            const todayItalyDate = italyDateOf(now);
 
-          // T-30min prima della fascia
-          const thirtyMinBefore = new Date(reminderTime.getTime() - 30 * 60_000);
+            if (orderCreatedDate === todayItalyDate) {
+              // Ordine confermato oggi con fascia di oggi che è scaduta: escalazione immediata
+              shouldSendReminder = true;
+              reminderReason = `fascia ${order.delivery_slot}: scaduta oggi, reminder immediatamente`;
+              console.log(`[escalation-tick] Order ${order.id.slice(0, 8)}: delivery_slot="${order.delivery_slot}", created TODAY with TODAY's slot that has passed → send 30min reminder immediately`);
+            } else {
+              // Ordine da ieri/prima, usa la fascia di domani
+              const tomorrow = new Date(now);
+              tomorrow.setDate(tomorrow.getDate() + 1);
+              const tomorrowStr = italyDateOf(tomorrow);
+              reminderTime = italyHourToUtc(tomorrowStr, slot.startH);
 
-          if (now >= thirtyMinBefore) {
-            shouldSendReminder = true;
-            reminderReason = `fascia ${order.delivery_slot}: T-30min (${thirtyMinBefore.toISOString()})`;
+              const thirtyMinBefore = new Date(reminderTime.getTime() - 30 * 60_000);
+              if (now >= thirtyMinBefore) {
+                shouldSendReminder = true;
+                reminderReason = `fascia ${order.delivery_slot}: T-30min (${thirtyMinBefore.toISOString()})`;
+              }
+            }
+          } else {
+            // Fascia è nel futuro, calcola T-30min
+            const thirtyMinBefore = new Date(reminderTime.getTime() - 30 * 60_000);
+
+            if (now >= thirtyMinBefore) {
+              shouldSendReminder = true;
+              reminderReason = `fascia ${order.delivery_slot}: T-30min (${thirtyMinBefore.toISOString()})`;
+            }
           }
         }
       }

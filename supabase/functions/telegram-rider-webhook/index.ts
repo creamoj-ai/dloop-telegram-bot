@@ -465,7 +465,7 @@ bot.callbackQuery(/^pickup_confirmed_(.+)$/, async (ctx) => {
         picked_up_at: new Date().toISOString(),
       })
       .eq("id", orderId)
-      .eq("status", "assigned")
+      .eq("status", "accepted")
       .select("dealer_contact_id");
 
     if (error || !rows || rows.length === 0) {

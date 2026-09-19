@@ -589,10 +589,10 @@ async function notifyRiders(orderId: string, order: any, riders: any[]) {
 🚚 **NUOVO ORDINE** (tier ${order.broadcast_tier})
 
 Ordine: #${orderId.slice(0, 8).toUpperCase()}
-📍 Ritiro: ${order.pickup_point}
-📍 Consegna: ${order.delivery_address}
-👤 Destinatario: ${order.recipient_name}
-📱 Telefono: ${order.recipient_phone}
+📍 Ritiro: ${order.pickup_address}
+📍 Consegna: ${order.dropoff_address}
+👤 Destinatario: ${order.customer_name}
+📱 Telefono: ${order.customer_phone}
 ${packageInfo.length > 0 ? `📦 Pacco: ${packageInfo.join(' • ')}` : ""}
 ${order.delivery_slot ? `⏰ Fascia: ${order.delivery_slot}` : ""}
 ${order.delivery_notes ? `📝 Note: ${order.delivery_notes}` : ""}
